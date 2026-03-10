@@ -113,6 +113,7 @@ const styles: Record<string, React.CSSProperties> = {
   trackInfo: {
     flex: 1,
     minWidth: 0,
+    overflow: 'hidden',
   },
   trackTitle: {
     fontSize: '0.85rem',
@@ -164,8 +165,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#555',
   },
   right: {
+    flex: 1,
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: '0.4rem',
     flexShrink: 0,
   },

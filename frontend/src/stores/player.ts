@@ -51,10 +51,16 @@ export function subscribePlayer(cb: () => void) {
   return () => { listeners.delete(cb) }
 }
 
+// Attempt to mimic a logarithmic (perceptual) volume curve: slider 0–1 maps to audio 0–1
+// using x^2 so the midpoint (~50%) feels like ~25% loudness, which matches human hearing.
+function toAudioVolume(sliderValue: number): number {
+  return sliderValue * sliderValue
+}
+
 export function setVolume(v: number) {
   data = { ...data, volume: v }
   localStorage.setItem(VOLUME_KEY, String(v))
-  if (audio) audio.volume = v
+  if (audio) audio.volume = toAudioVolume(v)
   notify()
 }
 
@@ -134,7 +140,7 @@ export async function playTrack(recordingMbid: string, title: string, artist: st
     }
 
     const newAudio = new Audio(result.url)
-    newAudio.volume = data.volume
+    newAudio.volume = toAudioVolume(data.volume)
     audio = newAudio
 
     newAudio.addEventListener('loadedmetadata', () => {

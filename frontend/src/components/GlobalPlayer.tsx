@@ -33,32 +33,17 @@ export default function GlobalPlayer() {
       </div>
 
       <div style={styles.inner}>
-        {/* Track info */}
-        <div style={styles.trackInfo}>
-          <div style={styles.trackTitle}>{player.trackTitle || 'No track'}</div>
-          {player.artistName && <div style={styles.trackArtist}>{player.artistName}</div>}
-        </div>
-
-        {/* Controls */}
-        <div style={styles.controls}>
+        {/* Left: Play button + volume */}
+        <div style={styles.left}>
           {player.state === 'loading' ? (
-            <span style={styles.loadingText}>Loading...</span>
+            <span style={styles.loadingText}>...</span>
           ) : player.state === 'none' ? (
-            <span style={styles.noneText}>No preview available</span>
+            <span style={styles.noneText}>--</span>
           ) : (
-            <>
-              <button style={styles.playBtn} onClick={togglePlayPause} disabled={!isActive}>
-                {player.state === 'playing' ? '\u275A\u275A' : '\u25B6'}
-              </button>
-              <span style={styles.time}>
-                {formatTime(player.currentTime)} / {formatTime(player.duration)}
-              </span>
-            </>
+            <button style={styles.playBtn} onClick={togglePlayPause} disabled={!isActive}>
+              {player.state === 'playing' ? '\u275A\u275A' : '\u25B6'}
+            </button>
           )}
-        </div>
-
-        {/* Volume + close */}
-        <div style={styles.right}>
           <span style={styles.volIcon}>
             {player.volume === 0 ? '\u{1F507}' : player.volume < 0.5 ? '\u{1F509}' : '\u{1F50A}'}
           </span>
@@ -72,6 +57,25 @@ export default function GlobalPlayer() {
             style={styles.volSlider}
             title={`Volume: ${Math.round(player.volume * 100)}%`}
           />
+        </div>
+
+        {/* Center: Track info */}
+        <div style={styles.center}>
+          {player.state === 'none' ? (
+            <div style={styles.noneText}>No preview available</div>
+          ) : (
+            <>
+              <div style={styles.trackTitle}>{player.trackTitle || 'No track'}</div>
+              {player.artistName && <div style={styles.trackArtist}>{player.artistName}</div>}
+            </>
+          )}
+        </div>
+
+        {/* Right: Time + close */}
+        <div style={styles.right}>
+          <span style={styles.time}>
+            {formatTime(player.currentTime)} / {formatTime(player.duration)}
+          </span>
           <button style={styles.closeBtn} onClick={stopPlayer} title="Close player">&times;</button>
         </div>
       </div>
@@ -104,16 +108,44 @@ const styles: Record<string, React.CSSProperties> = {
   inner: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
     padding: '0.5rem 1.5rem',
     maxWidth: 1200,
     margin: '0 auto',
     gap: '1.5rem',
   },
-  trackInfo: {
+  left: {
     flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  center: {
+    flex: 1,
+    textAlign: 'center',
     minWidth: 0,
     overflow: 'hidden',
+  },
+  right: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.75rem',
+  },
+  playBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    border: '1px solid #444',
+    background: 'transparent',
+    color: '#e0e0e0',
+    fontSize: '0.8rem',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    flexShrink: 0,
   },
   trackTitle: {
     fontSize: '0.85rem',
@@ -130,52 +162,28 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
-  controls: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.75rem',
-    flexShrink: 0,
-  },
-  playBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: '50%',
-    border: '1px solid #444',
-    background: 'transparent',
-    color: '#e0e0e0',
-    fontSize: '0.8rem',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 0,
-  },
   time: {
     fontSize: '0.75rem',
     color: '#666',
     fontVariantNumeric: 'tabular-nums',
-    minWidth: 80,
+    whiteSpace: 'nowrap',
   },
   loadingText: {
     fontSize: '0.8rem',
     color: '#888',
+    width: 32,
+    textAlign: 'center',
+    flexShrink: 0,
   },
   noneText: {
     fontSize: '0.8rem',
     color: '#555',
   },
-  right: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: '0.4rem',
-    flexShrink: 0,
-  },
   volIcon: {
     fontSize: '0.8rem',
     color: '#666',
     userSelect: 'none',
+    flexShrink: 0,
   },
   volSlider: {
     width: 80,
@@ -190,6 +198,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '1.2rem',
     cursor: 'pointer',
     padding: '0 0.25rem',
-    marginLeft: '0.25rem',
   },
 }

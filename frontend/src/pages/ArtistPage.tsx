@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getArtist, getAlbumTracks, ReleaseGroupResult } from '../api/search'
 import { requestCollection, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus } from '../api/library'
-import PreviewButton, { VolumeSlider } from '../components/PreviewButton'
+import PreviewButton from '../components/PreviewButton'
 
 type RequestState = 'idle' | 'loading' | 'done' | 'duplicate' | 'error'
 
@@ -99,11 +99,9 @@ function TrackList({ mbid }: { mbid: string }) {
   const discNumbers = Object.keys(discs).map(Number).sort()
   const multiDisc = discNumbers.length > 1
 
+  const artistName = data.artists?.map((a: { name: string }) => a.name).join(', ') ?? null
+
   return (
-    <>
-    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
-      <VolumeSlider />
-    </div>
     <div style={styles.trackList}>
       {discNumbers.map(disc => (
         <div key={disc}>
@@ -111,7 +109,7 @@ function TrackList({ mbid }: { mbid: string }) {
           {discs[disc].map((track, i) => (
             <div key={i} style={styles.trackRow}>
               <span style={styles.trackNum}>{track.number ?? track.position}</span>
-              <PreviewButton recordingMbid={track.recording_mbid} />
+              <PreviewButton recordingMbid={track.recording_mbid} title={track.title} artist={artistName} />
               <span style={styles.trackTitle}>{track.title}</span>
               <span style={styles.trackDuration}>{formatDuration(track.length_ms)}</span>
             </div>
@@ -122,7 +120,6 @@ function TrackList({ mbid }: { mbid: string }) {
         <div style={styles.trackEmpty}>No track information available.</div>
       )}
     </div>
-    </>
   )
 }
 

@@ -10,6 +10,7 @@ import Home from './pages/Home'
 import Settings from './pages/Settings'
 import ArtistPage from './pages/ArtistPage'
 import AlbumPage from './pages/AlbumPage'
+import GlobalPlayer from './components/GlobalPlayer'
 
 function Nav() {
   const { user, logout } = useAuthStore()
@@ -84,6 +85,7 @@ export default function App() {
                       <Route path="/settings" element={<Settings />} />
                     </Routes>
                   </main>
+                  <GlobalPlayer />
                 </>
               </RequireAuth>
             }
@@ -161,5 +163,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   main: {
     flex: 1,
+    paddingBottom: 60,
   },
 }

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getAlbumTracks, TrackResult } from '../api/search'
 import { requestCollection, requestSong, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus } from '../api/library'
-import PreviewButton, { VolumeSlider } from '../components/PreviewButton'
+import PreviewButton from '../components/PreviewButton'
 
 function CoverArt({ mbid, size }: { mbid: string; size: number }) {
   const [failed, setFailed] = useState(false)
@@ -206,9 +206,6 @@ export default function AlbumPage() {
             <AlbumRequestButton mbid={mbid!} album={data} inLibrary={inLibrary} />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
-            <VolumeSlider />
-          </div>
           <div style={styles.trackList}>
             {discNumbers.map(disc => (
               <div key={disc}>
@@ -217,10 +214,11 @@ export default function AlbumPage() {
                 )}
                 {discs[disc].map((track, i) => {
                   const trackState = track.recording_mbid ? statusToRequestState(trackStatusData?.[track.recording_mbid]) : 'idle'
+                  const artistName = data.artists.map(a => a.name).join(', ')
                   return (
                     <div key={i} style={styles.trackRow}>
                       <span style={styles.trackNum}>{track.number ?? track.position}</span>
-                      <PreviewButton recordingMbid={track.recording_mbid} />
+                      <PreviewButton recordingMbid={track.recording_mbid} title={track.title} artist={artistName} />
                       <span style={styles.trackTitle}>{track.title}</span>
                       <span style={styles.trackDuration}>{formatDuration(track.length_ms)}</span>
                       <TrackRequestButton track={track} artists={data.artists} initialState={trackState} />

@@ -39,14 +39,24 @@ A self-hosted music request and acquisition platform. Think Jellyseerr, but for 
 
 ## Optional Services
 
+All services below are optional — TrackForge works as a request tracker without them. However, **at least one download client is required for the acquisition pipeline** to actually download music:
+
+### Download Clients (at least one needed for acquisition)
+
 | Service | Purpose | Config |
 |---------|---------|--------|
 | **Prowlarr** | Usenet/torrent indexer aggregation | `PROWLARR_URL`, `PROWLARR_API_KEY` |
 | **NZBGet** | Usenet downloader | `NZBGET_URL`, `NZBGET_USERNAME`, `NZBGET_PASSWORD` |
 | **SABnzbd** | Usenet downloader (alternative) | `SABNZBD_URL`, `SABNZBD_API_KEY` |
-| **slskd** | Soulseek client | `SLSKD_URL`, `SLSKD_API_KEY` |
 | **qBittorrent** | Torrent client | `QBITTORRENT_URL`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD` |
-| **Jellyfin** | Media server (library scan on import) | `JELLYFIN_URL`, `JELLYFIN_API_KEY` |
+
+> **Roadmap:** Soulseek support via slskd is planned for a future release.
+
+### Other Integrations
+
+| Service | Purpose | Config |
+|---------|---------|--------|
+| **Jellyfin** | Media server — needed if you want automatic library scans after import | `JELLYFIN_URL`, `JELLYFIN_API_KEY` |
 | **Discord** | Webhook notifications | `DISCORD_WEBHOOK_URL` |
 
 ---

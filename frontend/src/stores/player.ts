@@ -52,9 +52,10 @@ export function subscribePlayer(cb: () => void) {
 }
 
 // Attempt to mimic a logarithmic (perceptual) volume curve: slider 0–1 maps to audio 0–1
-// using x^2 so the midpoint (~50%) feels like ~25% loudness, which matches human hearing.
+// using x^3 for a gentler ramp — most of the slider range stays quiet,
+// louder levels only near the top.
 function toAudioVolume(sliderValue: number): number {
-  return sliderValue * sliderValue
+  return sliderValue * sliderValue * sliderValue
 }
 
 export function setVolume(v: number) {

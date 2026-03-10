@@ -1,0 +1,90 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app        # hot reload — mounts source directly
+      - staging:/staging
+      - library:/library
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trackforge:trackforge@db:5432/trackforge
+      DATABASE_URL_SYNC: postgresql+psycopg2://trackforge:trackforge@db:5432/trackforge
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: dev-secret-key-not-for-production
+      DEBUG: "true"
+      ALLOWED_ORIGINS: '["http://localhost:3000"]'
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    command: ["arq", "trackforge.worker.settings.WorkerSettings"]
+    volumes:
+      - ./backend:/app
+      - staging:/staging
+      - library:/library
+      # Mount NZBGet's complete/music directory when deploying on the media server:
+      # - /path/to/nzbget/downloads/complete/music:/downloads
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trackforge:trackforge@db:5432/trackforge
+      DATABASE_URL_SYNC: postgresql+psycopg2://trackforge:trackforge@db:5432/trackforge
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: dev-secret-key-not-for-production
+      DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://api:8080
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: trackforge
+      POSTGRES_USER: trackforge
+      POSTGRES_PASSWORD: trackforge
+    ports:
+      - "5432:5432"   # expose for direct access with psql/DBeaver in dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trackforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"   # expose for direct inspection in dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata_dev:
+  staging:
+  library:

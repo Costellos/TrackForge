@@ -1,0 +1,571 @@
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
+import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem } from '../api/library'
+import { useAuthStore } from '../stores/auth'
+
+const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties }> = {
+  pending_approval: { label: 'Pending', style: { background: '#422006', color: '#fdba74' } },
+  approved:         { label: 'Approved', style: { background: '#1e3a5f', color: '#93c5fd' } },
+  searching:        { label: 'Searching', style: { background: '#1e3a5f', color: '#93c5fd' } },
+  downloading:      { label: 'Downloading', style: { background: '#1e3a5f', color: '#93c5fd' } },
+  processing:       { label: 'Processing', style: { background: '#1e3a5f', color: '#93c5fd' } },
+  available:        { label: 'Available', style: { background: '#14532d', color: '#86efac' } },
+  failed:           { label: 'Failed', style: { background: '#450a0a', color: '#fca5a5' } },
+  cancelled:        { label: 'Cancelled', style: { background: '#1c1917', color: '#78716c' } },
+}
+
+type FilterType = 'all' | 'artist' | 'collection' | 'song' | 'jellyfin'
+
+function StatusBadge({ status }: { status: string }) {
+  const config = STATUS_CONFIG[status] ?? { label: status, style: { background: '#222', color: '#aaa' } }
+  return <span style={{ ...styles.badge, ...config.style }}>{config.label}</span>
+}
+
+function CoverArt({ url, size }: { url: string | null; size: number }) {
+  const [failed, setFailed] = useState(false)
+  const box: React.CSSProperties = {
+    width: size, height: size, borderRadius: 4, flexShrink: 0,
+    background: '#1e1e1e', border: '1px solid #2a2a2a',
+  }
+  if (!url || failed) return <div style={box} />
+  return (
+    <img
+      src={url}
+      alt=""
+      onError={() => setFailed(true)}
+      style={{ ...box, objectFit: 'cover', border: 'none' }}
+    />
+  )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(0) + ' MB'
+  return (bytes / 1024).toFixed(0) + ' KB'
+}
+
+function formatScore(score: number): string {
+  return score.toFixed(1)
+}
+
+function CandidatesModal({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [submitting, setSubmitting] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: candidates, isLoading } = useQuery({
+    queryKey: ['candidates', requestId],
+    queryFn: () => listCandidates(requestId),
+  })
+
+  async function handleSelect(c: NzbCandidate) {
+    setSubmitting(c.download_url)
+    setError(null)
+    try {
+      await selectCandidate(requestId, c.download_url, c.title)
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Failed to submit NZB')
+    } finally {
+      setSubmitting(null)
+    }
+  }
+
+  async function handleAutoRetry() {
+    setSubmitting('auto')
+    setError(null)
+    try {
+      await retryRequest(requestId)
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Failed to retry')
+    } finally {
+      setSubmitting(null)
+    }
+  }
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={modalStyles.modal} onClick={e => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <h3 style={modalStyles.title}>Available NZBs</h3>
+          <button style={modalStyles.closeBtn} onClick={onClose}>×</button>
+        </div>
+
+        <div style={modalStyles.actions}>
+          <button
+            style={modalStyles.autoBtn}
+            onClick={handleAutoRetry}
+            disabled={submitting !== null}
+          >
+            {submitting === 'auto' ? 'Retrying...' : 'Auto-Retry (next best)'}
+          </button>
+        </div>
+
+        {error && <div style={modalStyles.error}>{error}</div>}
+
+        {isLoading && <div style={modalStyles.empty}>Searching indexers...</div>}
+
+        {candidates && candidates.length === 0 && (
+          <div style={modalStyles.empty}>No results found from indexers.</div>
+        )}
+
+        <div style={modalStyles.list}>
+          {candidates?.map((c, i) => (
+            <div
+              key={i}
+              style={{
+                ...modalStyles.candidate,
+                opacity: c.already_tried ? 0.5 : 1,
+              }}
+            >
+              <div style={modalStyles.candidateInfo}>
+                <div style={modalStyles.candidateTitle}>{c.title}</div>
+                <div style={modalStyles.candidateMeta}>
+                  {c.indexer} · {formatSize(c.size)} · {Math.round(c.age_days)}d old · {c.grabs} grabs · Score: {formatScore(c.score)}
+                  {c.format_score >= 3 && <span style={modalStyles.flacTag}>FLAC</span>}
+                  {c.already_tried && <span style={modalStyles.triedTag}>Already tried</span>}
+                </div>
+              </div>
+              <button
+                style={modalStyles.selectBtn}
+                onClick={() => handleSelect(c)}
+                disabled={submitting !== null}
+              >
+                {submitting === c.download_url ? 'Sending...' : 'Select'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EntryCard({ entry, isAdmin }: { entry: LibraryEntry; isAdmin: boolean }) {
+  const navigate = useNavigate()
+  const [showCandidates, setShowCandidates] = useState(false)
+  const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
+  const meta = [entry.subtitle, entry.year].filter(Boolean).join(' · ')
+  const isCollection = entry.target_type === 'collection'
+
+  function handleClick() {
+    if (entry.mbid) {
+      navigate(isCollection ? `/album/${entry.mbid}` : `/artist/${entry.mbid}`)
+    }
+  }
+
+  return (
+    <>
+      <div style={styles.card} onClick={handleClick}>
+        {isCollection && <CoverArt url={entry.mbid ? `https://coverartarchive.org/release-group/${entry.mbid}/front-250` : null} size={44} />}
+        <div style={styles.cardLeft}>
+          <span style={styles.typeTag}>{typeLabel}</span>
+          <div style={styles.cardTitle}>{entry.name}</div>
+          {meta && <div style={styles.cardMeta}>{meta}</div>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {entry.status === 'failed' && isAdmin && (
+            <button
+              style={styles.nzbBtn}
+              onClick={e => { e.stopPropagation(); setShowCandidates(true) }}
+            >
+              Browse NZBs
+            </button>
+          )}
+          <StatusBadge status={entry.status} />
+        </div>
+      </div>
+      {showCandidates && (
+        <CandidatesModal requestId={entry.id} onClose={() => setShowCandidates(false)} />
+      )}
+    </>
+  )
+}
+
+function JellyfinCard({ item }: { item: RecentlyAddedItem }) {
+  const navigate = useNavigate()
+  const [resolving, setResolving] = useState(false)
+
+  async function handleClick() {
+    if (!item.jellyfin_item_id || resolving) return
+    setResolving(true)
+    try {
+      const resolved = await resolveJellyfinItem(item.jellyfin_item_id)
+      if (resolved) navigate(`/album/${resolved}`)
+    } finally {
+      setResolving(false)
+    }
+  }
+
+  return (
+    <div style={{ ...styles.card, cursor: 'pointer' }} onClick={handleClick}>
+      <CoverArt url={recentlyAddedArtUrl(item)} size={44} />
+      <div style={styles.cardLeft}>
+        <span style={styles.typeTag}>Album</span>
+        <div style={styles.cardTitle}>{item.name}</div>
+        <div style={styles.cardMeta}>
+          {[item.artist_name, item.year].filter(Boolean).join(' · ')}
+        </div>
+      </div>
+      <span style={{ ...styles.badge, background: '#052e16', color: '#4ade80' }}>In Library</span>
+    </div>
+  )
+}
+
+export default function Library() {
+  const [filter, setFilter] = useState<FilterType>('all')
+  const { user } = useAuthStore()
+  const isAdmin = user?.role === 'admin' || user?.role === 'moderator'
+
+  const { data, isFetching, error } = useQuery({
+    queryKey: ['library'],
+    queryFn: listLibrary,
+    staleTime: 1000 * 30,
+  })
+
+  const { data: jellyfinData } = useQuery({
+    queryKey: ['library', 'recently-added-all'],
+    queryFn: () => getRecentlyAdded(50),
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const jellyfinItems = jellyfinData ?? []
+
+  const filtered = filter === 'jellyfin'
+    ? []
+    : data?.filter(e => filter === 'all' ? true : e.target_type === filter) ?? []
+
+  const totalCount = filter === 'jellyfin'
+    ? jellyfinItems.length
+    : filter === 'all'
+      ? (filtered.length + jellyfinItems.length)
+      : filtered.length
+
+  return (
+    <div style={styles.page}>
+      <h1 style={styles.heading}>Library</h1>
+
+      <div style={styles.filterRow}>
+        {(['all', 'artist', 'collection', 'song', 'jellyfin'] as FilterType[]).map(f => (
+          <button
+            key={f}
+            style={filter === f ? { ...styles.filterBtn, ...styles.filterBtnActive } : styles.filterBtn}
+            onClick={() => setFilter(f)}
+          >
+            {f === 'all' ? 'All' : f === 'artist' ? 'Artists' : f === 'collection' ? 'Albums' : f === 'song' ? 'Songs' : 'In Jellyfin'}
+          </button>
+        ))}
+        <span style={styles.count}>{totalCount} item{totalCount !== 1 ? 's' : ''}</span>
+      </div>
+
+      {error && (
+        <div style={styles.error}>Failed to load library. Check that the API is running.</div>
+      )}
+
+      {isFetching && !data && (
+        <div style={styles.empty}>Loading...</div>
+      )}
+
+      <div style={styles.list}>
+        {/* Jellyfin library items (shown first when filter is 'jellyfin', at bottom for 'all') */}
+        {filter === 'jellyfin' && jellyfinItems.map((item, i) => (
+          <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} />
+        ))}
+
+        {/* Request-based entries */}
+        {filtered.map(entry => (
+          <EntryCard key={entry.id} entry={entry} isAdmin={isAdmin} />
+        ))}
+
+        {/* Jellyfin items at the bottom for 'all' filter */}
+        {filter === 'all' && jellyfinItems.length > 0 && (
+          <>
+            <div style={styles.sectionDivider}>
+              <span style={styles.sectionLabel}>Jellyfin Library</span>
+              <span style={styles.sectionCount}>{jellyfinItems.length} album{jellyfinItems.length !== 1 ? 's' : ''}</span>
+            </div>
+            {jellyfinItems.map((item, i) => (
+              <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} />
+            ))}
+          </>
+        )}
+      </div>
+
+      {!isFetching && totalCount === 0 && (
+        <div style={styles.empty}>
+          {filter === 'jellyfin'
+            ? 'No albums found in Jellyfin. Make sure Jellyfin is configured and the library has synced.'
+            : filter === 'all'
+              ? 'Nothing here yet. Use Search to request artists or albums.'
+              : `No ${filter === 'artist' ? 'artists' : filter === 'song' ? 'songs' : 'albums'} requested yet.`}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    maxWidth: 800,
+    margin: '0 auto',
+    padding: '2rem 1rem',
+  },
+  heading: {
+    fontSize: '1.75rem',
+    fontWeight: 700,
+    marginBottom: '1.5rem',
+    color: '#f0f0f0',
+  },
+  filterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    marginBottom: '1.5rem',
+  },
+  filterBtn: {
+    padding: '0.35rem 0.875rem',
+    borderRadius: 6,
+    border: '1px solid #333',
+    background: '#1a1a1a',
+    color: '#aaa',
+    cursor: 'pointer',
+    fontSize: '0.825rem',
+  },
+  filterBtnActive: {
+    background: '#2563eb',
+    border: '1px solid #2563eb',
+    color: '#fff',
+  },
+  count: {
+    marginLeft: 'auto',
+    fontSize: '0.8rem',
+    color: '#555',
+  },
+  list: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+  },
+  card: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0.875rem 1rem',
+    background: '#1a1a1a',
+    border: '1px solid #2a2a2a',
+    borderRadius: 8,
+    gap: '1rem',
+    cursor: 'pointer',
+  },
+  cardLeft: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.2rem',
+    minWidth: 0,
+    flex: 1,
+  },
+  typeTag: {
+    fontSize: '0.7rem',
+    color: '#555',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    fontWeight: 600,
+  },
+  cardTitle: {
+    fontWeight: 600,
+    fontSize: '0.95rem',
+    color: '#f0f0f0',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  cardMeta: {
+    fontSize: '0.75rem',
+    color: '#666',
+  },
+  badge: {
+    padding: '0.3rem 0.75rem',
+    borderRadius: 5,
+    fontSize: '0.775rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  sectionDivider: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '1.25rem 0 0.5rem',
+    borderTop: '1px solid #2a2a2a',
+    marginTop: '0.75rem',
+  },
+  sectionLabel: {
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: '#4ade80',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  sectionCount: {
+    fontSize: '0.75rem',
+    color: '#555',
+  },
+  error: {
+    color: '#ef4444',
+    padding: '1rem',
+    background: '#1a1a1a',
+    borderRadius: 8,
+    marginBottom: '1rem',
+  },
+  empty: {
+    color: '#555',
+    textAlign: 'center',
+    padding: '3rem 1rem',
+  },
+  nzbBtn: {
+    padding: '0.3rem 0.65rem',
+    borderRadius: 5,
+    border: '1px solid #d97706',
+    background: '#422006',
+    color: '#fbbf24',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+}
+
+const modalStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.7)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modal: {
+    background: '#1a1a1a',
+    border: '1px solid #333',
+    borderRadius: 12,
+    width: '90vw',
+    maxWidth: 700,
+    maxHeight: '80vh',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '1rem 1.25rem',
+    borderBottom: '1px solid #2a2a2a',
+  },
+  title: {
+    margin: 0,
+    fontSize: '1.1rem',
+    fontWeight: 600,
+    color: '#f0f0f0',
+  },
+  closeBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#888',
+    fontSize: '1.5rem',
+    cursor: 'pointer',
+    padding: '0 0.25rem',
+  },
+  actions: {
+    padding: '0.75rem 1.25rem',
+    borderBottom: '1px solid #2a2a2a',
+  },
+  autoBtn: {
+    padding: '0.4rem 1rem',
+    borderRadius: 6,
+    border: '1px solid #2563eb',
+    background: '#1e3a5f',
+    color: '#93c5fd',
+    cursor: 'pointer',
+    fontSize: '0.825rem',
+    fontWeight: 500,
+  },
+  error: {
+    color: '#ef4444',
+    padding: '0.75rem 1.25rem',
+    fontSize: '0.85rem',
+  },
+  empty: {
+    color: '#555',
+    textAlign: 'center',
+    padding: '2rem 1rem',
+  },
+  list: {
+    overflowY: 'auto',
+    padding: '0.5rem 0',
+  },
+  candidate: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0.75rem 1.25rem',
+    borderBottom: '1px solid #222',
+    gap: '0.75rem',
+  },
+  candidateInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  candidateTitle: {
+    fontSize: '0.85rem',
+    fontWeight: 500,
+    color: '#e0e0e0',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  candidateMeta: {
+    fontSize: '0.75rem',
+    color: '#666',
+    marginTop: '0.2rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.4rem',
+    flexWrap: 'wrap',
+  },
+  flacTag: {
+    background: '#14532d',
+    color: '#86efac',
+    padding: '0.1rem 0.4rem',
+    borderRadius: 3,
+    fontSize: '0.65rem',
+    fontWeight: 600,
+  },
+  triedTag: {
+    background: '#450a0a',
+    color: '#fca5a5',
+    padding: '0.1rem 0.4rem',
+    borderRadius: 3,
+    fontSize: '0.65rem',
+    fontWeight: 600,
+  },
+  selectBtn: {
+    padding: '0.35rem 0.75rem',
+    borderRadius: 5,
+    border: '1px solid #22c55e',
+    background: '#052e16',
+    color: '#86efac',
+    cursor: 'pointer',
+    fontSize: '0.775rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+}

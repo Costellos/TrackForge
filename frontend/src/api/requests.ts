@@ -106,8 +106,9 @@ export interface NzbCandidate {
   already_tried: boolean
 }
 
-export async function listCandidates(requestId: string): Promise<NzbCandidate[]> {
-  const res = await api.get<NzbCandidate[]>(`/requests/${requestId}/candidates`)
+export async function listCandidates(requestId: string, artistOverride?: string): Promise<NzbCandidate[]> {
+  const params = artistOverride ? { artist_override: artistOverride } : undefined
+  const res = await api.get<NzbCandidate[]>(`/requests/${requestId}/candidates`, { params })
   return res.data
 }
 

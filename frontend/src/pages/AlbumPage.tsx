@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getAlbumTracks, TrackResult } from '../api/search'
 import { requestCollection, requestSong, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus } from '../api/library'
-import PreviewButton from '../components/PreviewButton'
+import PreviewButton, { VolumeSlider } from '../components/PreviewButton'
 
 function CoverArt({ mbid, size }: { mbid: string; size: number }) {
   const [failed, setFailed] = useState(false)
@@ -206,6 +206,9 @@ export default function AlbumPage() {
             <AlbumRequestButton mbid={mbid!} album={data} inLibrary={inLibrary} />
           </div>
 
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+            <VolumeSlider />
+          </div>
           <div style={styles.trackList}>
             {discNumbers.map(disc => (
               <div key={disc}>

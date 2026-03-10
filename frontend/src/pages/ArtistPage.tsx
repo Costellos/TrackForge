@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getArtist, getAlbumTracks, ReleaseGroupResult } from '../api/search'
 import { requestCollection, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus } from '../api/library'
-import PreviewButton from '../components/PreviewButton'
+import PreviewButton, { VolumeSlider } from '../components/PreviewButton'
 
 type RequestState = 'idle' | 'loading' | 'done' | 'duplicate' | 'error'
 
@@ -100,6 +100,10 @@ function TrackList({ mbid }: { mbid: string }) {
   const multiDisc = discNumbers.length > 1
 
   return (
+    <>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
+      <VolumeSlider />
+    </div>
     <div style={styles.trackList}>
       {discNumbers.map(disc => (
         <div key={disc}>
@@ -118,6 +122,7 @@ function TrackList({ mbid }: { mbid: string }) {
         <div style={styles.trackEmpty}>No track information available.</div>
       )}
     </div>
+    </>
   )
 }
 

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
 import { getTrackPreview, PreviewResult } from '../api/search'
 
 type PreviewState = 'idle' | 'loading' | 'playing' | 'paused' | 'none'
@@ -6,6 +6,63 @@ type PreviewState = 'idle' | 'loading' | 'playing' | 'paused' | 'none'
 // Global audio element — only one track can play at a time
 let globalAudio: HTMLAudioElement | null = null
 let globalStopCallback: (() => void) | null = null
+
+// Global volume (0–1), persisted to localStorage
+const VOLUME_KEY = 'trackforge_volume'
+let globalVolume = parseFloat(localStorage.getItem(VOLUME_KEY) ?? '0.5')
+const volumeListeners = new Set<() => void>()
+
+function getVolume() { return globalVolume }
+function subscribeVolume(cb: () => void) { volumeListeners.add(cb); return () => { volumeListeners.delete(cb) } }
+
+export function setGlobalVolume(v: number) {
+  globalVolume = v
+  localStorage.setItem(VOLUME_KEY, String(v))
+  if (globalAudio) globalAudio.volume = v
+  volumeListeners.forEach(cb => cb())
+}
+
+export function useVolume() {
+  return useSyncExternalStore(subscribeVolume, getVolume)
+}
+
+export function VolumeSlider() {
+  const volume = useVolume()
+  return (
+    <div style={volumeStyles.wrapper}>
+      <span style={volumeStyles.icon}>{volume === 0 ? '\u{1F507}' : volume < 0.5 ? '\u{1F509}' : '\u{1F50A}'}</span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={volume}
+        onChange={e => setGlobalVolume(parseFloat(e.target.value))}
+        style={volumeStyles.slider}
+        title={`Volume: ${Math.round(volume * 100)}%`}
+      />
+    </div>
+  )
+}
+
+const volumeStyles: Record<string, React.CSSProperties> = {
+  wrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.4rem',
+  },
+  icon: {
+    fontSize: '0.85rem',
+    color: '#666',
+    userSelect: 'none',
+  },
+  slider: {
+    width: 80,
+    height: 4,
+    accentColor: '#2563eb',
+    cursor: 'pointer',
+  },
+}
 
 export default function PreviewButton({ recordingMbid }: { recordingMbid: string | null }) {
   const [state, setState] = useState<PreviewState>('idle')
@@ -89,6 +146,7 @@ export default function PreviewButton({ recordingMbid }: { recordingMbid: string
     }
 
     const audio = new Audio(url)
+    audio.volume = globalVolume
     globalAudio = audio
 
     const onStop = () => setState('idle')

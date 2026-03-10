@@ -518,6 +518,7 @@ class CandidateResponse(BaseModel):
 @router.get("/{request_id}/candidates", response_model=list[CandidateResponse])
 async def list_candidates(
     request_id: str,
+    artist_override: str | None = None,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -536,6 +537,8 @@ async def list_candidates(
 
     prowlarr = ProwlarrClient(settings.prowlarr_url, settings.prowlarr_api_key)
     name, artist_name = await _resolve_name(db, request)
+    if artist_override:
+        artist_name = artist_override
     query = _build_query(request.target_type, name, artist_name)
 
     results = await prowlarr.search(query)

@@ -50,15 +50,20 @@ function formatScore(score: number): string {
   return score.toFixed(1)
 }
 
-function CandidatesModal({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+function CandidatesModal({ requestId, entryName, entrySubtitle, onClose }: { requestId: string; entryName: string; entrySubtitle: string | null; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [artistOverride, setArtistOverride] = useState('')
+  const [appliedOverride, setAppliedOverride] = useState<string | undefined>(undefined)
 
   const { data: candidates, isLoading } = useQuery({
-    queryKey: ['candidates', requestId],
-    queryFn: () => listCandidates(requestId),
+    queryKey: ['candidates', requestId, appliedOverride],
+    queryFn: () => listCandidates(requestId, appliedOverride),
   })
+
+  // Extract artist from subtitle (format is "Album · Artist Name" or just "Artist Name")
+  const detectedArtist = entrySubtitle?.split(' · ').slice(1).join(' · ') || null
 
   async function handleSelect(c: NzbCandidate) {
     setSubmitting(c.download_url)
@@ -94,7 +99,7 @@ function CandidatesModal({ requestId, onClose }: { requestId: string; onClose: (
     <div style={modalStyles.overlay} onClick={onClose}>
       <div style={modalStyles.modal} onClick={e => e.stopPropagation()}>
         <div style={modalStyles.header}>
-          <h3 style={modalStyles.title}>Available NZBs</h3>
+          <h3 style={modalStyles.title}>NZBs for {entryName}</h3>
           <button style={modalStyles.closeBtn} onClick={onClose}>×</button>
         </div>
 
@@ -106,6 +111,36 @@ function CandidatesModal({ requestId, onClose }: { requestId: string; onClose: (
           >
             {submitting === 'auto' ? 'Retrying...' : 'Auto-Retry (next best)'}
           </button>
+        </div>
+
+        <div style={modalStyles.artistRow}>
+          <span style={modalStyles.artistLabel}>
+            Artist: {detectedArtist ? <span style={{ color: '#e0e0e0' }}>{detectedArtist}</span> : <span style={{ color: '#ef4444' }}>Not found</span>}
+          </span>
+          <div style={modalStyles.artistInputRow}>
+            <input
+              type="text"
+              placeholder="Override artist name..."
+              value={artistOverride}
+              onChange={e => setArtistOverride(e.target.value)}
+              style={modalStyles.artistInput}
+            />
+            <button
+              style={modalStyles.artistSearchBtn}
+              disabled={!artistOverride.trim() || isLoading}
+              onClick={() => { setAppliedOverride(artistOverride.trim()); }}
+            >
+              Search
+            </button>
+            {appliedOverride && (
+              <button
+                style={modalStyles.artistClearBtn}
+                onClick={() => { setArtistOverride(''); setAppliedOverride(undefined); }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
 
         {error && <div style={modalStyles.error}>{error}</div>}
@@ -183,7 +218,7 @@ function EntryCard({ entry, isAdmin }: { entry: LibraryEntry; isAdmin: boolean }
         </div>
       </div>
       {showCandidates && (
-        <CandidatesModal requestId={entry.id} onClose={() => setShowCandidates(false)} />
+        <CandidatesModal requestId={entry.id} entryName={entry.name} entrySubtitle={entry.subtitle} onClose={() => setShowCandidates(false)} />
       )}
     </>
   )
@@ -555,6 +590,53 @@ const modalStyles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     fontSize: '0.65rem',
     fontWeight: 600,
+  },
+  artistRow: {
+    padding: '0.75rem 1.25rem',
+    borderBottom: '1px solid #2a2a2a',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.4rem',
+  },
+  artistLabel: {
+    fontSize: '0.8rem',
+    color: '#888',
+  },
+  artistInputRow: {
+    display: 'flex',
+    gap: '0.4rem',
+    alignItems: 'center',
+  },
+  artistInput: {
+    flex: 1,
+    padding: '0.35rem 0.6rem',
+    borderRadius: 5,
+    border: '1px solid #333',
+    background: '#111',
+    color: '#e0e0e0',
+    fontSize: '0.825rem',
+    outline: 'none',
+  },
+  artistSearchBtn: {
+    padding: '0.35rem 0.75rem',
+    borderRadius: 5,
+    border: '1px solid #2563eb',
+    background: '#1e3a5f',
+    color: '#93c5fd',
+    cursor: 'pointer',
+    fontSize: '0.775rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+  artistClearBtn: {
+    padding: '0.35rem 0.6rem',
+    borderRadius: 5,
+    border: '1px solid #333',
+    background: 'transparent',
+    color: '#888',
+    cursor: 'pointer',
+    fontSize: '0.775rem',
+    whiteSpace: 'nowrap',
   },
   selectBtn: {
     padding: '0.35rem 0.75rem',

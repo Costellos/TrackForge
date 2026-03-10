@@ -28,4 +28,4 @@ frontend/dist/
 .claude/
 
 # Stray Windows paths
-C:\\*
+C:\*

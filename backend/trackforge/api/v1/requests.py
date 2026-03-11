@@ -302,12 +302,18 @@ async def list_library(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Return all requests for the current user, enriched with the target's name."""
+    """Return active/available requests for the library page."""
+    visible_statuses = ["pending_approval", "approved", "searching", "downloading", "processing", "available", "failed"]
     if user.role in ("admin", "moderator"):
-        result = await db.execute(select(Request).order_by(Request.created_at.desc()))
+        result = await db.execute(
+            select(Request).where(Request.status.in_(visible_statuses)).order_by(Request.created_at.desc())
+        )
     else:
         result = await db.execute(
-            select(Request).where(Request.user_id == user.id).order_by(Request.created_at.desc())
+            select(Request).where(
+                Request.user_id == user.id,
+                Request.status.in_(visible_statuses),
+            ).order_by(Request.created_at.desc())
         )
     requests = result.scalars().all()
 

@@ -154,8 +154,10 @@ async def sync_jellyfin_library(db: AsyncSession) -> int:
     return synced
 
 
-def _normalize_name(name: str) -> str:
+def _normalize_name(name: str | None) -> str:
     """Normalize album/artist name for fuzzy matching."""
+    if not name:
+        return ""
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 

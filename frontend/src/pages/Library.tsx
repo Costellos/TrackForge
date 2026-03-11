@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { listLibrary, LibraryEntry, LibraryResponse, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
+import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
 import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem, jellyfinWebUrl } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 

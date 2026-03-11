@@ -88,6 +88,46 @@ async def library_status(
     )
 
 
+class LibrarySearchItem(BaseModel):
+    jellyfin_item_id: str
+    name: str
+    artist_name: str
+    year: int | None = None
+
+
+class LibrarySearchResponse(BaseModel):
+    items: list[LibrarySearchItem]
+
+
+@router.get("/search", response_model=LibrarySearchResponse)
+async def search_library(
+    q: str = Query("", min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Search the synced Jellyfin library by album/artist name."""
+    result = await db.execute(select(LibraryItem).where(LibraryItem.jellyfin_item_id.isnot(None)))
+    items = result.scalars().all()
+
+    query_lower = q.lower()
+    matches = []
+    for item in items:
+        meta = item.metadata_ or {}
+        name = meta.get("name", "")
+        artist = meta.get("artist_name", "")
+        if query_lower in name.lower() or query_lower in artist.lower():
+            matches.append(LibrarySearchItem(
+                jellyfin_item_id=item.jellyfin_item_id,
+                name=name,
+                artist_name=artist,
+                year=meta.get("year"),
+            ))
+        if len(matches) >= 20:
+            break
+
+    return LibrarySearchResponse(items=matches)
+
+
 class ScanResponse(BaseModel):
     synced: int
     resolved: int

@@ -131,3 +131,10 @@ export async function checkMbidStatuses(mbids: string[]): Promise<Record<string,
   const res = await api.post<{ statuses: Record<string, string | null> }>('/requests/status', { mbids })
   return res.data.statuses
 }
+
+export async function linkJellyfin(requestId: string, jellyfinItemId: string): Promise<RequestResponse> {
+  const res = await api.post<RequestResponse>(`/requests/${requestId}/link-jellyfin`, {
+    jellyfin_item_id: jellyfinItemId,
+  })
+  return res.data
+}

@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
-import { jellyfinWebUrl } from '../api/library'
+import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, NzbCandidate } from '../api/requests'
+import { jellyfinWebUrl, searchLibrary, LibrarySearchItem } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
 const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties }> = {
@@ -210,9 +210,100 @@ function CandidatesModal({ requestId, entryName, entrySubtitle, onClose }: { req
   )
 }
 
+function LinkModal({ requestId, entryName, onClose }: { requestId: string; entryName: string; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [query, setQuery] = useState(entryName)
+  const [results, setResults] = useState<LibrarySearchItem[]>([])
+  const [searching, setSearching] = useState(false)
+  const [linking, setLinking] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSearch() {
+    if (!query.trim()) return
+    setSearching(true)
+    setError(null)
+    try {
+      const items = await searchLibrary(query.trim())
+      setResults(items)
+    } catch {
+      setError('Search failed')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  async function handleLink(item: LibrarySearchItem) {
+    setLinking(item.jellyfin_item_id)
+    setError(null)
+    try {
+      await linkJellyfin(requestId, item.jellyfin_item_id)
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      onClose()
+    } catch {
+      setError('Failed to link')
+    } finally {
+      setLinking(null)
+    }
+  }
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={modalStyles.modal} onClick={e => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <h3 style={modalStyles.title}>Link to Jellyfin</h3>
+          <button style={modalStyles.closeBtn} onClick={onClose}>×</button>
+        </div>
+        <div style={modalStyles.artistRow}>
+          <div style={modalStyles.artistInputRow}>
+            <input
+              type="text"
+              placeholder="Search Jellyfin library..."
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              style={modalStyles.artistInput}
+            />
+            <button
+              style={modalStyles.artistSearchBtn}
+              disabled={!query.trim() || searching}
+              onClick={handleSearch}
+            >
+              {searching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+        </div>
+        {error && <div style={modalStyles.error}>{error}</div>}
+        {results.length === 0 && !searching && (
+          <div style={modalStyles.empty}>Search for an album in your Jellyfin library to link it.</div>
+        )}
+        <div style={modalStyles.list}>
+          {results.map(item => (
+            <div key={item.jellyfin_item_id} style={modalStyles.candidate}>
+              <div style={modalStyles.candidateInfo}>
+                <div style={modalStyles.candidateTitle}>{item.name}</div>
+                <div style={modalStyles.candidateMeta}>
+                  {[item.artist_name, item.year].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <button
+                style={modalStyles.selectBtn}
+                onClick={() => handleLink(item)}
+                disabled={linking !== null}
+              >
+                {linking === item.jellyfin_item_id ? 'Linking...' : 'Link'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
   const navigate = useNavigate()
   const [showCandidates, setShowCandidates] = useState(false)
+  const [showLink, setShowLink] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
   const meta = [entry.subtitle, entry.year].filter(Boolean).join(' · ')
   const isCollection = entry.target_type === 'collection'
@@ -233,6 +324,14 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
           {meta && <div style={styles.cardMeta}>{meta}</div>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {entry.status === 'available' && !entry.jellyfin_item_id && isAdmin && (
+            <button
+              style={styles.linkBtn}
+              onClick={e => { e.stopPropagation(); setShowLink(true) }}
+            >
+              Link
+            </button>
+          )}
           {entry.status === 'failed' && isAdmin && (
             <button
               style={styles.nzbBtn}
@@ -258,6 +357,9 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
       </div>
       {showCandidates && (
         <CandidatesModal requestId={entry.id} entryName={entry.name} entrySubtitle={entry.subtitle} onClose={() => setShowCandidates(false)} />
+      )}
+      {showLink && (
+        <LinkModal requestId={entry.id} entryName={entry.name} onClose={() => setShowLink(false)} />
       )}
     </>
   )
@@ -431,6 +533,17 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #d97706',
     background: '#422006',
     color: '#fbbf24',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+  linkBtn: {
+    padding: '0.3rem 0.65rem',
+    borderRadius: 5,
+    border: '1px solid #2563eb',
+    background: '#1e3a5f',
+    color: '#93c5fd',
     cursor: 'pointer',
     fontSize: '0.75rem',
     fontWeight: 500,

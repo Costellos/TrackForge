@@ -674,3 +674,28 @@ async def cancel_request(
     await db.commit()
     await db.refresh(request)
     return request
+
+
+class LinkJellyfinBody(BaseModel):
+    jellyfin_item_id: str
+
+
+@router.post("/{request_id}/link-jellyfin", response_model=RequestResponse)
+async def link_jellyfin(
+    request_id: str,
+    body: LinkJellyfinBody,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Manually link a request to a Jellyfin library item (admin only)."""
+    request = await db.get(Request, request_id)
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    params = request.search_params or {}
+    params["jellyfin_item_id"] = body.jellyfin_item_id
+    request.search_params = params
+    request.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(request)
+    return request

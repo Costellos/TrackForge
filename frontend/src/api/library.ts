@@ -49,3 +49,15 @@ export async function checkLibraryStatus(mbids: string[]): Promise<LibraryStatus
 export function jellyfinWebUrl(baseUrl: string, itemId: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/web/index.html#!/details?id=${itemId}`
 }
+
+export interface LibrarySearchItem {
+  jellyfin_item_id: string
+  name: string
+  artist_name: string
+  year: number | null
+}
+
+export async function searchLibrary(query: string): Promise<LibrarySearchItem[]> {
+  const res = await api.get<{ items: LibrarySearchItem[] }>('/library/search', { params: { q: query } })
+  return res.data.items
+}

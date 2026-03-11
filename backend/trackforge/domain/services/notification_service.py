@@ -29,6 +29,7 @@ NOTIFY_STATUSES = {
     "pending_approval",
     "approved",
     "rejected",
+    "pending_review",
     "available",
     "failed",
 }

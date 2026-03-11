@@ -14,6 +14,7 @@ from trackforge.domain.services.acquisition_service import (
     run_queued_jobs,
 )
 from trackforge.domain.services.processing_service import process_processing_requests
+from trackforge.domain.services.review_service import auto_import_pending_reviews
 
 log = structlog.get_logger()
 
@@ -41,7 +42,10 @@ async def process_acquisition_pipeline(ctx: dict) -> dict:
     async with async_session_factory() as db:
         moved = await process_processing_requests(db)
 
-    result = {"dispatched": dispatched, "searched": searched, "polled": polled, "moved": moved}
+    async with async_session_factory() as db:
+        auto_imported = await auto_import_pending_reviews(db)
+
+    result = {"dispatched": dispatched, "searched": searched, "polled": polled, "moved": moved, "auto_imported": auto_imported}
     if any(result.values()):
         log.info("acquisition.pipeline", **result)
     return result

@@ -70,7 +70,7 @@ RequestTargetTypeEnum = Enum(
 
 RequestStatusEnum = Enum(
     "pending_approval", "approved", "searching", "downloading",
-    "processing", "available", "failed", "cancelled", "rejected",
+    "processing", "pending_review", "available", "failed", "cancelled", "rejected",
     name="request_status",
 )
 

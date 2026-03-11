@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 from trackforge.config import get_settings
 from trackforge.db.models import AcquisitionJob, Collection, ExternalIdentifier, Request
 from trackforge.domain.services.notification_service import notify_request_status
-from trackforge.domain.services.settings_service import get_setting
+from trackforge.domain.services.settings_service import get_setting, get_setting_bool
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -31,12 +31,14 @@ settings = get_settings()
 async def process_processing_requests(db: AsyncSession) -> int:
     """
     Find all `processing` requests, move their downloaded files to the
-    library, trigger a Jellyfin scan, and advance status to `available`.
+    library, and advance status to `pending_review` or `available`.
     """
     result = await db.execute(select(Request).where(Request.status == "processing"))
     requests = result.scalars().all()
     if not requests:
         return 0
+
+    tag_review_enabled = await get_setting_bool(db, "tag_review_enabled")
 
     processed = 0
     for req in requests:
@@ -57,25 +59,53 @@ async def process_processing_requests(db: AsyncSession) -> int:
             continue
 
         if moved_path:
-            req.status = "available"
-            req.resolved_at = datetime.now(timezone.utc)
-            req.updated_at = datetime.now(timezone.utc)
-            # Store the library path for Jellyfin matching later
             params = req.search_params or {}
             params["library_path"] = moved_path
-            req.search_params = params
+
+            if tag_review_enabled:
+                req.status = "pending_review"
+                params["pending_review_at"] = datetime.now(timezone.utc).isoformat()
+                req.search_params = params
+                req.updated_at = datetime.now(timezone.utc)
+                log.info("processing.pending_review", request_id=req.id, library_path=moved_path)
+                await notify_request_status(db, req, status_override="pending_review")
+            else:
+                req.status = "available"
+                req.resolved_at = datetime.now(timezone.utc)
+                req.updated_at = datetime.now(timezone.utc)
+                req.search_params = params
+                log.info("processing.complete", request_id=req.id, library_path=moved_path)
+
             processed += 1
-            log.info("processing.complete", request_id=req.id, library_path=moved_path)
 
     if processed:
         await db.commit()
-        await _trigger_jellyfin_scan()
-        # Notify for each newly available request
-        for req in requests:
-            if req.status == "available":
-                await notify_request_status(db, req)
+        # Only trigger Jellyfin scan + available notifications when skipping review
+        if not tag_review_enabled:
+            await _trigger_jellyfin_scan()
+            for req in requests:
+                if req.status == "available":
+                    await notify_request_status(db, req)
 
     return processed
+
+
+async def finalize_import(db: AsyncSession, req: Request) -> None:
+    """
+    Finalize a request after tag review: rename files, mark available,
+    trigger Jellyfin scan, send notification.
+    """
+    library_path = (req.search_params or {}).get("library_path")
+    if library_path:
+        await _rename_files_in_folder(db, library_path)
+
+    req.status = "available"
+    req.resolved_at = datetime.now(timezone.utc)
+    req.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await _trigger_jellyfin_scan()
+    await notify_request_status(db, req)
 
 
 def _sanitize_path(name: str) -> str:

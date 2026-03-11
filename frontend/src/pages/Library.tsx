@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, cancelRequest, NzbCandidate } from '../api/requests'
 import { api } from '../api/client'
 import { jellyfinWebUrl, searchLibrary, LibrarySearchItem, getJellyfinItems, linkMusicBrainz, unlinkMusicBrainz } from '../api/library'
+import { getReviewTags, saveReviewTags, approveReview, FileTags } from '../api/review'
 import { search, ReleaseGroupResult } from '../api/search'
 import { useAuthStore } from '../stores/auth'
 
@@ -13,20 +14,22 @@ const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties 
   searching:        { label: 'Searching', style: { background: '#1e3a5f', color: '#93c5fd' } },
   downloading:      { label: 'Downloading', style: { background: '#1e3a5f', color: '#93c5fd' } },
   processing:       { label: 'Processing', style: { background: '#1e3a5f', color: '#93c5fd' } },
+  pending_review:   { label: 'Review', style: { background: '#3b0764', color: '#c084fc' } },
   available:        { label: 'Available', style: { background: '#14532d', color: '#86efac' } },
   failed:           { label: 'Failed', style: { background: '#450a0a', color: '#fca5a5' } },
   cancelled:        { label: 'Cancelled', style: { background: '#1c1917', color: '#78716c' } },
 }
 
-type Section = 'requested' | 'downloading' | 'processing' | 'available' | 'failed' | 'jellyfin'
+type Section = 'requested' | 'downloading' | 'processing' | 'pending_review' | 'available' | 'failed' | 'jellyfin'
 
 const SECTION_CONFIG: Record<Section, { label: string; color: string; emptyMsg: string }> = {
-  requested:   { label: 'Requested', color: '#fdba74', emptyMsg: 'No pending requests.' },
-  downloading: { label: 'Downloading', color: '#93c5fd', emptyMsg: 'Nothing downloading right now.' },
-  processing:  { label: 'Processing', color: '#93c5fd', emptyMsg: 'Nothing being processed.' },
-  available:   { label: 'Available', color: '#86efac', emptyMsg: 'No available items.' },
-  failed:      { label: 'Failed', color: '#fca5a5', emptyMsg: 'No failed requests.' },
-  jellyfin:    { label: 'In Jellyfin', color: '#4ade80', emptyMsg: 'No items in Jellyfin yet.' },
+  requested:      { label: 'Requested', color: '#fdba74', emptyMsg: 'No pending requests.' },
+  downloading:    { label: 'Downloading', color: '#93c5fd', emptyMsg: 'Nothing downloading right now.' },
+  processing:     { label: 'Processing', color: '#93c5fd', emptyMsg: 'Nothing being processed.' },
+  pending_review: { label: 'Pending Review', color: '#c084fc', emptyMsg: 'Nothing to review.' },
+  available:      { label: 'Available', color: '#86efac', emptyMsg: 'No available items.' },
+  failed:         { label: 'Failed', color: '#fca5a5', emptyMsg: 'No failed requests.' },
+  jellyfin:       { label: 'In Jellyfin', color: '#4ade80', emptyMsg: 'No items in Jellyfin yet.' },
 }
 
 function classifyEntry(entry: LibraryEntry): Section {
@@ -40,6 +43,8 @@ function classifyEntry(entry: LibraryEntry): Section {
       return 'downloading'
     case 'processing':
       return 'processing'
+    case 'pending_review':
+      return 'pending_review'
     case 'available':
       return 'available'
     case 'failed':
@@ -402,12 +407,177 @@ function LinkMusicBrainzModal({ item, onClose }: { item: DisplayEntry; onClose: 
   )
 }
 
+function TagReviewModal({ requestId, entryName, onClose }: { requestId: string; entryName: string; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [files, setFiles] = useState<FileTags[]>([])
+  const [editedTags, setEditedTags] = useState<Record<string, Record<string, string>>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [autoImportAt, setAutoImportAt] = useState<string | null>(null)
+
+  // Load tags on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getReviewTags(requestId)
+        setFiles(res.files)
+        setAutoImportAt(res.auto_import_at)
+        const edits: Record<string, Record<string, string>> = {}
+        for (const f of res.files) {
+          edits[f.filename] = { ...f.tags }
+        }
+        setEditedTags(edits)
+      } catch {
+        setError('Failed to load tags')
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [requestId])
+
+  function updateTag(filename: string, key: string, value: string) {
+    setEditedTags(prev => ({
+      ...prev,
+      [filename]: { ...prev[filename], [key]: value },
+    }))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      const fileEdits = Object.entries(editedTags).map(([filename, tags]) => ({ filename, tags }))
+      await saveReviewTags(requestId, fileEdits)
+      // Reload tags after save
+      const res = await getReviewTags(requestId)
+      setFiles(res.files)
+    } catch {
+      setError('Failed to save tags')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleApprove() {
+    setApproving(true)
+    setError(null)
+    try {
+      await approveReview(requestId)
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      onClose()
+    } catch {
+      setError('Failed to approve')
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  // Countdown timer
+  const [countdown, setCountdown] = useState('')
+  useEffect(() => {
+    if (!autoImportAt) return
+    const iv = setInterval(() => {
+      const diff = new Date(autoImportAt).getTime() - Date.now()
+      if (diff <= 0) {
+        setCountdown('Auto-importing...')
+        clearInterval(iv)
+        return
+      }
+      const m = Math.floor(diff / 60000)
+      const s = Math.floor((diff % 60000) / 1000)
+      setCountdown(`Auto-import in ${m}:${s.toString().padStart(2, '0')}`)
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [autoImportAt])
+
+  const TAG_LABELS: Record<string, string> = {
+    tracknumber: '#', title: 'Title', artist: 'Artist',
+    albumartist: 'Album Artist', album: 'Album', date: 'Year', genre: 'Genre',
+  }
+  const TAG_ORDER = ['tracknumber', 'title', 'artist', 'albumartist', 'album', 'date', 'genre']
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={{ ...modalStyles.modal, maxWidth: 900 }} onClick={e => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <div>
+            <h3 style={modalStyles.title}>Review Tags: {entryName}</h3>
+            {countdown && <span style={{ fontSize: '0.75rem', color: '#c084fc' }}>{countdown}</span>}
+          </div>
+          <button style={modalStyles.closeBtn} onClick={onClose}>×</button>
+        </div>
+
+        {error && <div style={modalStyles.error}>{error}</div>}
+
+        {loading && <div style={modalStyles.empty}>Loading tags...</div>}
+
+        {!loading && files.length === 0 && (
+          <div style={modalStyles.empty}>No audio files found.</div>
+        )}
+
+        {!loading && files.length > 0 && (
+          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '55vh' }}>
+            <table style={reviewStyles.table}>
+              <thead>
+                <tr>
+                  {TAG_ORDER.map(key => (
+                    <th key={key} style={reviewStyles.th}>{TAG_LABELS[key] || key}</th>
+                  ))}
+                  <th style={reviewStyles.th}>Format</th>
+                </tr>
+              </thead>
+              <tbody>
+                {files.map(f => (
+                  <tr key={f.filename}>
+                    {TAG_ORDER.map(key => (
+                      <td key={key} style={reviewStyles.td}>
+                        <input
+                          style={reviewStyles.input}
+                          value={editedTags[f.filename]?.[key] ?? ''}
+                          onChange={e => updateTag(f.filename, key, e.target.value)}
+                        />
+                      </td>
+                    ))}
+                    <td style={{ ...reviewStyles.td, color: '#888', fontSize: '0.7rem' }}>
+                      {f.format.toUpperCase()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', padding: '0.75rem 1.25rem', borderTop: '1px solid #2a2a2a', justifyContent: 'flex-end' }}>
+          <button
+            style={{ ...styles.linkBtn, padding: '0.4rem 1rem' }}
+            onClick={handleSave}
+            disabled={saving || approving || loading}
+          >
+            {saving ? 'Saving...' : 'Save Tags'}
+          </button>
+          <button
+            style={{ ...reviewStyles.approveBtn }}
+            onClick={handleApprove}
+            disabled={saving || approving || loading}
+          >
+            {approving ? 'Importing...' : 'Approve & Import'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [showCandidates, setShowCandidates] = useState(false)
   const [showLink, setShowLink] = useState(false)
   const [showMbLink, setShowMbLink] = useState(false)
+  const [showTagReview, setShowTagReview] = useState(false)
   const [unlinking, setUnlinking] = useState(false)
   const [removing, setRemoving] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
@@ -479,6 +649,14 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
               {removing ? '...' : '×'}
             </button>
           )}
+          {entry.status === 'pending_review' && isAdmin && (
+            <button
+              style={reviewStyles.reviewBtn}
+              onClick={e => { e.stopPropagation(); setShowTagReview(true) }}
+            >
+              Review Tags
+            </button>
+          )}
           {entry.status === 'available' && !entry.jellyfin_item_id && isAdmin && (
             <button
               style={styles.linkBtn}
@@ -544,6 +722,9 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
       {showMbLink && (
         <LinkMusicBrainzModal item={entry} onClose={() => setShowMbLink(false)} />
       )}
+      {showTagReview && (
+        <TagReviewModal requestId={entry.id} entryName={entry.name} onClose={() => setShowTagReview(false)} />
+      )}
     </>
   )
 }
@@ -572,6 +753,7 @@ export default function Library() {
     requested: [],
     downloading: [],
     processing: [],
+    pending_review: [],
     available: [],
     failed: [],
     jellyfin: [],
@@ -622,7 +804,7 @@ export default function Library() {
   const totalCount = entries.length + (jellyfinData?.items ?? []).filter(
     item => !requestJfIds.has(item.jellyfin_item_id)
   ).length
-  const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'available', 'failed', 'jellyfin']
+  const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'pending_review', 'available', 'failed', 'jellyfin']
   const nonEmptySections = sectionOrder.filter(s => sections[s].length > 0)
 
   return (
@@ -975,5 +1157,59 @@ const modalStyles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     whiteSpace: 'nowrap',
     flexShrink: 0,
+  },
+}
+
+const reviewStyles: Record<string, React.CSSProperties> = {
+  reviewBtn: {
+    padding: '0.3rem 0.65rem',
+    borderRadius: 5,
+    border: '1px solid #7c3aed',
+    background: '#3b0764',
+    color: '#c084fc',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+  approveBtn: {
+    padding: '0.4rem 1rem',
+    borderRadius: 6,
+    border: '1px solid #22c55e',
+    background: '#052e16',
+    color: '#86efac',
+    cursor: 'pointer',
+    fontSize: '0.825rem',
+    fontWeight: 500,
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '0.8rem',
+  },
+  th: {
+    padding: '0.4rem 0.5rem',
+    textAlign: 'left',
+    color: '#888',
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    borderBottom: '1px solid #2a2a2a',
+    whiteSpace: 'nowrap',
+  },
+  td: {
+    padding: '0.25rem 0.3rem',
+    borderBottom: '1px solid #1a1a1a',
+  },
+  input: {
+    width: '100%',
+    padding: '0.25rem 0.4rem',
+    borderRadius: 3,
+    border: '1px solid #333',
+    background: '#111',
+    color: '#e0e0e0',
+    fontSize: '0.78rem',
+    outline: 'none',
+    boxSizing: 'border-box',
   },
 }

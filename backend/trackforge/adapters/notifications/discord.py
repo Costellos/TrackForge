@@ -18,6 +18,7 @@ STATUS_COLORS = {
     "searching": 0xA855F7,         # purple
     "downloading": 0x38BDF8,       # sky
     "processing": 0x8B5CF6,        # violet
+    "pending_review": 0xC084FC,    # lavender
     "available": 0x4ADE80,         # green
     "failed": 0xEF4444,            # red
     "cancelled": 0x737373,         # gray
@@ -30,6 +31,7 @@ STATUS_LABELS = {
     "searching": "Searching",
     "downloading": "Downloading",
     "processing": "Processing",
+    "pending_review": "Pending Tag Review",
     "available": "Now Available",
     "failed": "Request Failed",
     "cancelled": "Request Cancelled",

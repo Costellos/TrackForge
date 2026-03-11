@@ -113,7 +113,7 @@ async def check_mbid_statuses(
         return MbidStatusResponse(statuses={mbid: None for mbid in body.mbids})
 
     # Find active requests for this user against those entity IDs
-    active_statuses = ["pending_approval", "approved", "searching", "downloading", "processing", "available"]
+    active_statuses = ["pending_approval", "approved", "searching", "downloading", "processing", "pending_review", "available"]
     req_result = await db.execute(
         select(Request).where(
             Request.user_id == user.id,
@@ -303,7 +303,7 @@ async def list_library(
     user: User = Depends(get_current_user),
 ):
     """Return active/available requests for the library page."""
-    visible_statuses = ["pending_approval", "approved", "searching", "downloading", "processing", "available", "failed"]
+    visible_statuses = ["pending_approval", "approved", "searching", "downloading", "processing", "pending_review", "available", "failed"]
     if user.role in ("admin", "moderator"):
         result = await db.execute(
             select(Request).where(Request.status.in_(visible_statuses)).order_by(Request.created_at.desc())

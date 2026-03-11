@@ -24,9 +24,6 @@ _NEWZNAB_NS = "http://www.newznab.com/DTD/2010/feeds/attributes/"
 _VIDEO_KEYWORDS = ("720p", "1080p", "2160p", "4k", "bluray", "blu-ray", "dvdrip", "hdtv", "x265", "hevc", "h264")
 _AUDIO_CATS = {3000, 3010, 3020, 3030, 3040, 3050}
 
-# Indexers tried first — their results are sorted to the top within each score tier
-PREFERRED_INDEXERS = {"NZBgeek", "NZBGeek"}
-
 
 @dataclass
 class ProwlarrResult:
@@ -83,11 +80,15 @@ class ProwlarrClient:
         except Exception:
             return False
 
-    async def _get_indexer_ids(self) -> list[int]:
+    async def _get_indexers(self) -> list[dict]:
+        """Return enabled indexers with id and priority from Prowlarr."""
         async with self._client() as c:
             resp = await c.get(f"{self._base}/api/v1/indexer")
             resp.raise_for_status()
-            return [i["id"] for i in resp.json() if i.get("enable")]
+            return [
+                {"id": i["id"], "priority": i.get("priority", 25), "name": i.get("name", "")}
+                for i in resp.json() if i.get("enable")
+            ]
 
     def _extract_guid_id(self, guid_url: str) -> str:
         """
@@ -145,14 +146,17 @@ class ProwlarrClient:
         Search all indexers via per-indexer Newznab API.
         Returns audio-only results sorted best-first.
         """
-        indexer_ids = await self._get_indexer_ids()
-        if not indexer_ids:
+        indexers = await self._get_indexers()
+        if not indexers:
             log.warning("prowlarr.no_indexers")
             return []
 
+        # Map indexer_id → priority (lower = higher priority)
+        indexer_priority: dict[int, int] = {ix["id"]: ix["priority"] for ix in indexers}
+
         all_items: list[tuple[int, ET.Element]] = []  # (indexer_id, item)
         async with httpx.AsyncClient(timeout=60.0) as c:
-            for iid in indexer_ids:
+            for iid in [ix["id"] for ix in indexers]:
                 url = f"{self._base}/{iid}/api"
                 params = {"t": "search", "q": query, "apikey": self._api_key}
                 try:
@@ -242,8 +246,8 @@ class ProwlarrClient:
 
             results.append(result)
 
-        # Sort: preferred indexers first, then by score descending
-        results.sort(key=lambda r: (r.indexer not in PREFERRED_INDEXERS, -r.score))
+        # Sort: Prowlarr priority first (lower = better), then by score descending
+        results.sort(key=lambda r: (indexer_priority.get(r.indexer_id, 25), -r.score))
         log.info("prowlarr.filtered_count", count=len(results), query=query)
         if results:
             best = results[0]

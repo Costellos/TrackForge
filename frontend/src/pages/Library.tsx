@@ -487,7 +487,7 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
               Link
             </button>
           )}
-          {isLibraryOnly && isAdmin && !entry.mbid && (
+          {section === 'jellyfin' && entry._libraryItemId && isAdmin && !entry.mbid && (
             <button
               style={styles.linkBtn}
               onClick={e => { e.stopPropagation(); setShowMbLink(true) }}
@@ -495,7 +495,7 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
               Link to MB
             </button>
           )}
-          {isLibraryOnly && isAdmin && entry.mbid && (
+          {section === 'jellyfin' && entry._libraryItemId && isAdmin && entry.mbid && (
             <>
               <button
                 style={styles.unlinkBtn}
@@ -578,6 +578,19 @@ export default function Library() {
   }
   for (const entry of entries) {
     sections[classifyEntry(entry)].push(entry)
+  }
+
+  // Build lookup: jellyfin_item_id → library item id
+  const jfIdToLibraryId: Record<string, string> = {}
+  for (const item of jellyfinData?.items ?? []) {
+    jfIdToLibraryId[item.jellyfin_item_id] = item.id
+  }
+
+  // Enrich request-based jellyfin entries with library item IDs
+  for (const entry of sections.jellyfin) {
+    if (entry.jellyfin_item_id && jfIdToLibraryId[entry.jellyfin_item_id]) {
+      entry._libraryItemId = jfIdToLibraryId[entry.jellyfin_item_id]
+    }
   }
 
   // Merge Jellyfin library items not already represented by requests

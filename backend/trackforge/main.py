@@ -1,6 +1,7 @@
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from trackforge.config import get_settings
 from trackforge.api.v1.router import router as v1_router
@@ -25,6 +26,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Prevent Cloudflare and browsers from caching API responses
+    @app.middleware("http")
+    async def no_cache_api(request: Request, call_next):
+        response: Response = await call_next(request)
+        if request.url.path.startswith("/api/") and "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     app.include_router(v1_router, prefix="/api/v1")
 

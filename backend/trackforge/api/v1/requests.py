@@ -198,6 +198,12 @@ async def request_collection(
             target_type="collection",
             target_id=collection.id,
             user_notes=body.user_notes,
+            search_params={
+                "title": body.title,
+                "artist_name": body.artist_name,
+                "artist_mbid": body.artist_mbid,
+                "mbid": body.mbid,
+            },
             auto_approve=auto_approve,
         )
     except ValueError as e:

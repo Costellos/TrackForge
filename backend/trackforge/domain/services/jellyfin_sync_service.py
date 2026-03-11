@@ -7,7 +7,7 @@ using MusicBrainz IDs (ProviderIds) to link Jellyfin items to local entities.
 This runs periodically via a worker cron job.
 """
 
-import json
+import re
 from datetime import datetime, timezone
 
 import structlog
@@ -84,12 +84,26 @@ async def sync_jellyfin_library(db: AsyncSession) -> int:
     synced = 0
 
     # Upsert items from Jellyfin
+    no_mbid_count = 0
     for jf_id, album in jellyfin_items.items():
         mbid = _extract_mbid(album)
         release_mbid = _extract_release_mbid(album)
         artist_name = album.get("AlbumArtist") or album.get("Artist") or ""
+        album_name = album.get("Name", "")
+
+        if not mbid and not release_mbid:
+            no_mbid_count += 1
+            if no_mbid_count <= 10:
+                log.warning(
+                    "jellyfin_sync.no_mbid",
+                    name=album_name,
+                    artist=artist_name,
+                    jf_id=jf_id,
+                    provider_ids=album.get("ProviderIds", {}),
+                )
+
         metadata = {
-            "name": album.get("Name", ""),
+            "name": album_name,
             "artist_name": artist_name,
             "mbid": mbid,
             "release_mbid": release_mbid,
@@ -126,10 +140,22 @@ async def sync_jellyfin_library(db: AsyncSession) -> int:
 
     # Invalidate cache
     await cache_delete(CACHE_KEY)
+    await cache_delete(NAME_CACHE_KEY)
     await cache_delete(RECENTLY_ADDED_KEY)
 
-    log.info("jellyfin_sync.complete", synced=synced, removed=len(stale_ids))
+    log.info("jellyfin_sync.complete", synced=synced, removed=len(stale_ids), no_mbid=no_mbid_count)
     return synced
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize album/artist name for fuzzy matching."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+async def _load_library_items(db: AsyncSession) -> list:
+    """Load all library items (shared by mbid and name lookups)."""
+    result = await db.execute(select(LibraryItem).where(LibraryItem.jellyfin_item_id.isnot(None)))
+    return result.scalars().all()
 
 
 async def get_library_mbids(db: AsyncSession) -> dict[str, str]:
@@ -142,8 +168,7 @@ async def get_library_mbids(db: AsyncSession) -> dict[str, str]:
     if cached is not None:
         return cached
 
-    result = await db.execute(select(LibraryItem).where(LibraryItem.jellyfin_item_id.isnot(None)))
-    items = result.scalars().all()
+    items = await _load_library_items(db)
 
     mbid_map: dict[str, str] = {}
     for item in items:
@@ -162,6 +187,37 @@ async def get_library_mbids(db: AsyncSession) -> dict[str, str]:
 
     await cache_set(CACHE_KEY, mbid_map, ttl=CACHE_TTL)
     return mbid_map
+
+
+NAME_CACHE_KEY = "jellyfin:library_names"
+
+
+async def get_library_name_index(db: AsyncSession) -> dict[str, str]:
+    """
+    Return a dict mapping normalized 'artist|album' keys to Jellyfin item IDs.
+    Used as fallback when Jellyfin items lack MusicBrainz ProviderIds.
+    Cached in Redis for 15 minutes.
+    """
+    cached = await cache_get(NAME_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    items = await _load_library_items(db)
+
+    name_map: dict[str, str] = {}
+    for item in items:
+        meta = item.metadata_ or {}
+        jf_id = item.jellyfin_item_id
+        if not jf_id:
+            continue
+        album_name = meta.get("name", "")
+        artist_name = meta.get("artist_name", "")
+        if album_name:
+            key = f"{_normalize_name(artist_name)}|{_normalize_name(album_name)}"
+            name_map[key] = jf_id
+
+    await cache_set(NAME_CACHE_KEY, name_map, ttl=CACHE_TTL)
+    return name_map
 
 
 async def get_recently_added(db: AsyncSession, limit: int = 20) -> list[dict]:
@@ -204,12 +260,65 @@ async def check_library_status(db: AsyncSession, mbids: list[str]) -> dict[str, 
     """
     Given a list of MusicBrainz release-group MBIDs, return a mapping of
     MBID → jellyfin_item_id (or None if not in library).
+    Falls back to name-based matching for items Jellyfin hasn't identified.
     """
     if not mbids:
         return {}
 
     library_mbids = await get_library_mbids(db)
-    return {mbid: library_mbids.get(mbid) for mbid in mbids}
+    statuses: dict[str, str | None] = {}
+    unmatched_mbids: list[str] = []
+
+    for mbid in mbids:
+        jf_id = library_mbids.get(mbid)
+        if jf_id:
+            statuses[mbid] = jf_id
+        else:
+            statuses[mbid] = None
+            unmatched_mbids.append(mbid)
+
+    # Try name-based fallback for unmatched MBIDs
+    if unmatched_mbids:
+        name_index = await get_library_name_index(db)
+        if name_index:
+            # Look up collection names for unmatched MBIDs
+            ext_result = await db.execute(
+                select(ExternalIdentifier).where(
+                    ExternalIdentifier.provider == "musicbrainz",
+                    ExternalIdentifier.external_id.in_(unmatched_mbids),
+                    ExternalIdentifier.entity_type == "collection",
+                )
+            )
+            ext_ids = ext_result.scalars().all()
+
+            collection_ids = [ext.entity_id for ext in ext_ids]
+            mbid_by_collection = {ext.entity_id: ext.external_id for ext in ext_ids}
+
+            if collection_ids:
+                col_result = await db.execute(
+                    select(Collection)
+                    .options(selectinload(Collection.primary_artist))
+                    .where(Collection.id.in_(collection_ids))
+                )
+                collections = col_result.scalars().all()
+
+                for col in collections:
+                    artist_name = col.primary_artist.name if col.primary_artist else ""
+                    album_name = col.title or ""
+                    key = f"{_normalize_name(artist_name)}|{_normalize_name(album_name)}"
+                    jf_id = name_index.get(key)
+                    if jf_id:
+                        mbid = mbid_by_collection.get(col.id)
+                        if mbid:
+                            statuses[mbid] = jf_id
+                            log.info(
+                                "library_status.name_match",
+                                mbid=mbid,
+                                artist=artist_name,
+                                album=album_name,
+                            )
+
+    return statuses
 
 
 ACTIVE_STATUSES = {"approved", "searching", "downloading", "processing"}
@@ -234,9 +343,11 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     if not active_requests:
         return 0
 
-    # Get library MBIDs (freshly cached after sync)
+    # Get library indexes (freshly cached after sync)
     library_mbids = await get_library_mbids(db)
-    if not library_mbids:
+    name_index = await get_library_name_index(db)
+
+    if not library_mbids and not name_index:
         return 0
 
     # Build a map of collection_id -> request for active requests
@@ -255,23 +366,49 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     # Map collection_id -> mbid
     collection_mbid_map = {ext.entity_id: ext.external_id for ext in ext_ids}
 
+    # Load collections with artists for name-based matching
+    col_result = await db.execute(
+        select(Collection)
+        .options(selectinload(Collection.primary_artist))
+        .where(Collection.id.in_(collection_ids))
+    )
+    collections_by_id = {c.id: c for c in col_result.scalars().all()}
+
     now = datetime.now(timezone.utc)
     resolved = 0
 
     for req in active_requests:
+        # Try MBID match first
         mbid = collection_mbid_map.get(req.target_id)
-        if not mbid:
-            continue
-        if mbid in library_mbids:
+        if mbid and mbid in library_mbids:
             req.status = "available"
             req.resolved_at = now
             req.updated_at = now
             resolved += 1
-            log.info(
-                "jellyfin_sync.auto_resolved",
-                request_id=req.id,
-                mbid=mbid,
-            )
+            log.info("jellyfin_sync.auto_resolved", request_id=req.id, mbid=mbid, match="mbid")
+            continue
+
+        # Try name-based match
+        col = collections_by_id.get(req.target_id)
+        if col and name_index:
+            artist_name = col.primary_artist.name if col.primary_artist else ""
+            # Also try artist from search_params
+            if not artist_name:
+                artist_name = (req.search_params or {}).get("artist_name", "")
+            album_name = col.title or ""
+            key = f"{_normalize_name(artist_name)}|{_normalize_name(album_name)}"
+            if key in name_index:
+                req.status = "available"
+                req.resolved_at = now
+                req.updated_at = now
+                resolved += 1
+                log.info(
+                    "jellyfin_sync.auto_resolved",
+                    request_id=req.id,
+                    artist=artist_name,
+                    album=album_name,
+                    match="name",
+                )
 
     if resolved:
         await db.commit()

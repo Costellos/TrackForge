@@ -92,14 +92,19 @@ async def _resolve_artist_name(db: AsyncSession, collection: Collection) -> str 
     )
     ext = result.scalar_one_or_none()
     if not ext:
+        log.warning("processing.no_external_id_for_collection", collection_id=collection.id)
         return None
 
     try:
+        log.info("processing.resolving_artist_from_mb", mbid=ext.external_id, collection_id=collection.id)
         rg = await mb.get_release_group(ext.external_id)
         if rg and rg.get("artists"):
-            return rg["artists"][0].get("name")
-    except Exception:
-        log.warning("processing.artist_resolve_failed", collection_id=collection.id)
+            name = rg["artists"][0].get("name")
+            log.info("processing.resolved_artist", name=name, mbid=ext.external_id)
+            return name
+        log.warning("processing.no_artists_in_rg", mbid=ext.external_id, rg_keys=list(rg.keys()) if rg else None)
+    except Exception as e:
+        log.warning("processing.artist_resolve_exception", collection_id=collection.id, error=str(e))
 
     return None
 
@@ -125,8 +130,25 @@ async def _build_library_path(db: AsyncSession, req: Request) -> str | None:
     if collection.primary_artist:
         artist_name = collection.primary_artist.name
     else:
-        # Fallback: look up artist from MusicBrainz via the collection's external ID
-        artist_name = await _resolve_artist_name(db, collection) or artist_name
+        log.warning(
+            "processing.no_primary_artist",
+            collection_id=collection.id,
+            collection_title=collection.title,
+            primary_artist_id=collection.primary_artist_id,
+        )
+        # Fallback 1: check request.search_params for artist_name
+        search_artist = (req.search_params or {}).get("artist_name")
+        if search_artist:
+            artist_name = search_artist
+            log.info("processing.artist_from_search_params", artist=search_artist, collection_id=collection.id)
+        else:
+            # Fallback 2: look up artist from MusicBrainz via the collection's external ID
+            resolved = await _resolve_artist_name(db, collection)
+            if resolved:
+                artist_name = resolved
+                log.info("processing.artist_resolved_from_mb", artist=resolved, collection_id=collection.id)
+            else:
+                log.error("processing.artist_resolve_failed_using_unknown", collection_id=collection.id)
 
     album_title = collection.title or "Unknown Album"
     year = ""

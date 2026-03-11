@@ -9,8 +9,11 @@ This is the boundary where "browse data" becomes "owned data".
 
 import uuid
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = structlog.get_logger()
 
 from trackforge.db.models import (
     Artist,
@@ -105,6 +108,14 @@ async def get_or_create_collection(
     if artist_mbid and artist_name:
         artist = await get_or_create_artist(db, artist_mbid, artist_name)
         primary_artist_id = artist.id
+    else:
+        log.warning(
+            "request.collection_no_artist",
+            mbid=mbid,
+            title=title,
+            artist_mbid=artist_mbid,
+            artist_name=artist_name,
+        )
 
     # Normalize collection type to our enum values
     type_map = {

@@ -46,10 +46,16 @@ export interface LibraryEntry {
   year: string | null
   requested_by: string | null
   mbid: string | null
+  jellyfin_item_id: string | null
 }
 
-export async function listLibrary(): Promise<LibraryEntry[]> {
-  const res = await api.get<LibraryEntry[]>('/requests/library')
+export interface LibraryResponse {
+  entries: LibraryEntry[]
+  jellyfin_url: string | null
+}
+
+export async function listLibrary(): Promise<LibraryResponse> {
+  const res = await api.get<LibraryResponse>('/requests/library')
   return res.data
 }
 

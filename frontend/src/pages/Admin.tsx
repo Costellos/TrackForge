@@ -172,11 +172,11 @@ export default function Admin() {
     queryClient.invalidateQueries({ queryKey: ['library'] })
   }
 
-  const filtered = data?.filter(e =>
+  const filtered = data?.entries?.filter(e =>
     filter === 'all' ? true : e.status === filter
   ) ?? []
 
-  const pendingCount = data?.filter(e => e.status === 'pending_approval').length ?? 0
+  const pendingCount = data?.entries?.filter(e => e.status === 'pending_approval').length ?? 0
 
   return (
     <div style={styles.page}>

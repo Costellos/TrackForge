@@ -322,38 +322,99 @@ async def check_library_status(db: AsyncSession, mbids: list[str]) -> dict[str, 
 
 
 ACTIVE_STATUSES = {"approved", "searching", "downloading", "processing"}
+LINKABLE_STATUSES = ACTIVE_STATUSES | {"available"}
+
+
+def _path_suffix(path: str, depth: int = 2) -> str:
+    """Extract the last `depth` components of a path and normalize for comparison."""
+    parts = path.rstrip("/").split("/")
+    return "/".join(parts[-depth:]).lower()
+
+
+async def _build_path_index(db: AsyncSession) -> dict[str, str]:
+    """Build a map of normalized path suffix → jellyfin_item_id from library items."""
+    items = await _load_library_items(db)
+    path_map: dict[str, str] = {}
+    for item in items:
+        if item.file_path and item.jellyfin_item_id:
+            suffix = _path_suffix(item.file_path)
+            path_map[suffix] = item.jellyfin_item_id
+    return path_map
+
+
+def _match_request_to_jellyfin(
+    req: Request,
+    collection_mbid_map: dict[str, str],
+    library_mbids: dict[str, str],
+    name_index: dict[str, str],
+    path_index: dict[str, str],
+    collections_by_id: dict[str, Collection],
+) -> str | None:
+    """Try to match a request to a jellyfin_item_id. Returns jf_id or None."""
+    params = req.search_params or {}
+
+    # 1. MBID match
+    mbid = collection_mbid_map.get(req.target_id)
+    if mbid:
+        jf_id = library_mbids.get(mbid)
+        if jf_id:
+            return jf_id
+
+    # 2. Name-based match
+    col = collections_by_id.get(req.target_id)
+    if col and name_index:
+        artist_name = col.primary_artist.name if col.primary_artist else ""
+        if not artist_name:
+            artist_name = params.get("artist_name", "")
+        album_name = col.title or ""
+        key = f"{_normalize_name(artist_name)}|{_normalize_name(album_name)}"
+        jf_id = name_index.get(key)
+        if jf_id:
+            return jf_id
+
+    # 3. Path-based match (most reliable — uses the exact folder we moved files to)
+    library_path = params.get("library_path")
+    if library_path and path_index:
+        suffix = _path_suffix(library_path)
+        jf_id = path_index.get(suffix)
+        if jf_id:
+            return jf_id
+
+    return None
 
 
 async def auto_resolve_requests(db: AsyncSession) -> int:
     """
-    After a library sync, check active requests whose collections are now
-    in the Jellyfin library and mark them as available.
-    Returns the number of requests resolved.
+    After a library sync, check collection requests and link them to Jellyfin items.
+    - Active requests that match are marked as 'available'
+    - All matched requests (including already-available) get jellyfin_item_id stored
+    Returns the number of newly resolved requests.
     """
     from trackforge.domain.services.notification_service import notify_request_status
 
-    # Get all active collection requests
+    # Get all collection requests that could benefit from linking
     result = await db.execute(
         select(Request).where(
             Request.target_type == "collection",
-            Request.status.in_(ACTIVE_STATUSES),
+            Request.status.in_(LINKABLE_STATUSES),
         )
     )
-    active_requests = result.scalars().all()
-    if not active_requests:
+    all_requests = result.scalars().all()
+    if not all_requests:
         return 0
 
-    # Get library indexes (freshly cached after sync)
+    # Get library indexes
     library_mbids = await get_library_mbids(db)
     name_index = await get_library_name_index(db)
+    path_index = await _build_path_index(db)
 
-    if not library_mbids and not name_index:
+    if not library_mbids and not name_index and not path_index:
         return 0
 
-    # Build a map of collection_id -> request for active requests
-    collection_ids = [r.target_id for r in active_requests]
+    # Collect collection IDs
+    collection_ids = list({r.target_id for r in all_requests})
 
-    # Look up MBIDs for these collections via external_identifiers
+    # Look up MBIDs for collections
     ext_result = await db.execute(
         select(ExternalIdentifier).where(
             ExternalIdentifier.entity_type == "collection",
@@ -361,12 +422,9 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
             ExternalIdentifier.provider == "musicbrainz",
         )
     )
-    ext_ids = ext_result.scalars().all()
+    collection_mbid_map = {ext.entity_id: ext.external_id for ext in ext_result.scalars().all()}
 
-    # Map collection_id -> mbid
-    collection_mbid_map = {ext.entity_id: ext.external_id for ext in ext_ids}
-
-    # Load collections with artists for name-based matching
+    # Load collections with artists
     col_result = await db.execute(
         select(Collection)
         .options(selectinload(Collection.primary_artist))
@@ -376,45 +434,41 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
 
     now = datetime.now(timezone.utc)
     resolved = 0
+    linked = 0
+    dirty = False
 
-    for req in active_requests:
-        # Try MBID match first
-        mbid = collection_mbid_map.get(req.target_id)
-        if mbid and mbid in library_mbids:
+    for req in all_requests:
+        jf_id = _match_request_to_jellyfin(
+            req, collection_mbid_map, library_mbids, name_index, path_index, collections_by_id
+        )
+        if not jf_id:
+            continue
+
+        # Store jellyfin_item_id on the request for frontend access
+        params = req.search_params or {}
+        if params.get("jellyfin_item_id") != jf_id:
+            params["jellyfin_item_id"] = jf_id
+            req.search_params = params
+            dirty = True
+            linked += 1
+
+        # If still active, mark as available
+        if req.status in ACTIVE_STATUSES:
             req.status = "available"
             req.resolved_at = now
             req.updated_at = now
             resolved += 1
-            log.info("jellyfin_sync.auto_resolved", request_id=req.id, mbid=mbid, match="mbid")
-            continue
+            dirty = True
+            log.info("jellyfin_sync.auto_resolved", request_id=req.id, jf_id=jf_id)
 
-        # Try name-based match
-        col = collections_by_id.get(req.target_id)
-        if col and name_index:
-            artist_name = col.primary_artist.name if col.primary_artist else ""
-            # Also try artist from search_params
-            if not artist_name:
-                artist_name = (req.search_params or {}).get("artist_name", "")
-            album_name = col.title or ""
-            key = f"{_normalize_name(artist_name)}|{_normalize_name(album_name)}"
-            if key in name_index:
-                req.status = "available"
-                req.resolved_at = now
-                req.updated_at = now
-                resolved += 1
-                log.info(
-                    "jellyfin_sync.auto_resolved",
-                    request_id=req.id,
-                    artist=artist_name,
-                    album=album_name,
-                    match="name",
-                )
-
-    if resolved:
+    if dirty:
         await db.commit()
-        # Send notifications for resolved requests
-        for req in active_requests:
-            if req.status == "available":
+        # Send notifications for newly resolved requests
+        for req in all_requests:
+            if req.status == "available" and req.resolved_at == now:
                 await notify_request_status(db, req)
+
+    if linked:
+        log.info("jellyfin_sync.linked_requests", linked=linked, resolved=resolved)
 
     return resolved

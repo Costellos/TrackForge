@@ -25,7 +25,7 @@ from trackforge.domain.services.request_service import (
     get_or_create_song,
 )
 from trackforge.domain.services.notification_service import notify_request_status
-from trackforge.domain.services.settings_service import get_setting_bool
+from trackforge.domain.services.settings_service import get_all_settings as get_db_settings, get_setting_bool
 
 router = APIRouter(prefix="/requests", tags=["requests"])
 
@@ -287,11 +287,17 @@ class LibraryEntryResponse(BaseModel):
     year: str | None
     requested_by: str | None  # username of the requester
     mbid: str | None = None  # MusicBrainz ID for cover art
+    jellyfin_item_id: str | None = None  # Jellyfin item ID for direct link
 
     model_config = {"from_attributes": True}
 
 
-@router.get("/library", response_model=list[LibraryEntryResponse])
+class LibraryResponse(BaseModel):
+    entries: list[LibraryEntryResponse]
+    jellyfin_url: str | None = None
+
+
+@router.get("/library", response_model=LibraryResponse)
 async def list_library(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -409,9 +415,14 @@ async def list_library(
             year=year,
             requested_by=requester.username if requester else None,
             mbid=mbid_map.get(req.target_id),
+            jellyfin_item_id=(req.search_params or {}).get("jellyfin_item_id"),
         ))
 
-    return entries
+    db_settings = await get_db_settings(db)
+    return LibraryResponse(
+        entries=entries,
+        jellyfin_url=db_settings.get("jellyfin_external_url") or None,
+    )
 
 
 @router.get("/{request_id}", response_model=RequestResponse)

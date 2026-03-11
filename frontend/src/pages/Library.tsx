@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
+import { listLibrary, LibraryEntry, LibraryResponse, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
 import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem, jellyfinWebUrl } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
@@ -183,7 +183,7 @@ function CandidatesModal({ requestId, entryName, entrySubtitle, onClose }: { req
   )
 }
 
-function EntryCard({ entry, isAdmin }: { entry: LibraryEntry; isAdmin: boolean }) {
+function EntryCard({ entry, isAdmin, jellyfinUrl }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null }) {
   const navigate = useNavigate()
   const [showCandidates, setShowCandidates] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
@@ -214,7 +214,19 @@ function EntryCard({ entry, isAdmin }: { entry: LibraryEntry; isAdmin: boolean }
               Browse NZBs
             </button>
           )}
-          <StatusBadge status={entry.status} />
+          {entry.jellyfin_item_id && jellyfinUrl ? (
+            <a
+              href={jellyfinWebUrl(jellyfinUrl, entry.jellyfin_item_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ ...styles.badge, background: '#052e16', color: '#4ade80', textDecoration: 'none' }}
+              onClick={e => e.stopPropagation()}
+            >
+              Jellyfin ↗
+            </a>
+          ) : (
+            <StatusBadge status={entry.status} />
+          )}
         </div>
       </div>
       {showCandidates && (
@@ -262,7 +274,7 @@ export default function Library() {
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin' || user?.role === 'moderator'
 
-  const { data, isFetching, error } = useQuery({
+  const { data: libraryData, isFetching, error } = useQuery({
     queryKey: ['library'],
     queryFn: listLibrary,
     staleTime: 1000 * 30,
@@ -274,12 +286,14 @@ export default function Library() {
     staleTime: 1000 * 60 * 5,
   })
 
+  const entries = libraryData?.entries ?? []
+  const requestJellyfinUrl = libraryData?.jellyfin_url ?? null
   const jellyfinItems = jellyfinData?.items ?? []
-  const jellyfinUrl = jellyfinData?.jellyfin_url ?? null
+  const jellyfinUrl = jellyfinData?.jellyfin_url ?? requestJellyfinUrl ?? null
 
   const filtered = filter === 'jellyfin'
     ? []
-    : data?.filter(e => filter === 'all' ? true : e.target_type === filter) ?? []
+    : entries.filter(e => filter === 'all' ? true : e.target_type === filter)
 
   const totalCount = filter === 'jellyfin'
     ? jellyfinItems.length
@@ -308,7 +322,7 @@ export default function Library() {
         <div style={styles.error}>Failed to load library. Check that the API is running.</div>
       )}
 
-      {isFetching && !data && (
+      {isFetching && !libraryData && (
         <div style={styles.empty}>Loading...</div>
       )}
 
@@ -320,7 +334,7 @@ export default function Library() {
 
         {/* Request-based entries */}
         {filtered.map(entry => (
-          <EntryCard key={entry.id} entry={entry} isAdmin={isAdmin} />
+          <EntryCard key={entry.id} entry={entry} isAdmin={isAdmin} jellyfinUrl={jellyfinUrl} />
         ))}
 
         {/* Jellyfin items at the bottom for 'all' filter */}

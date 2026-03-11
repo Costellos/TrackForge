@@ -246,7 +246,7 @@ export default function Home() {
     staleTime: 60_000 * 5,
   })
 
-  const entries = libraryData ?? []
+  const entries = libraryData?.entries ?? []
   const recentlyAddedItems = recentlyAddedData?.items ?? []
   const jellyfinUrl = recentlyAddedData?.jellyfin_url ?? null
 

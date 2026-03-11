@@ -51,17 +51,21 @@ async def process_processing_requests(db: AsyncSession) -> int:
             continue
 
         if job.adapter == "nzbget":
-            success = await _move_nzbget_download(db, req, job)
+            moved_path = await _move_nzbget_download(db, req, job)
         else:
             log.info("processing.adapter_not_supported", adapter=job.adapter, job_id=job.id)
             continue
 
-        if success:
+        if moved_path:
             req.status = "available"
             req.resolved_at = datetime.now(timezone.utc)
             req.updated_at = datetime.now(timezone.utc)
+            # Store the library path for Jellyfin matching later
+            params = req.search_params or {}
+            params["library_path"] = moved_path
+            req.search_params = params
             processed += 1
-            log.info("processing.complete", request_id=req.id)
+            log.info("processing.complete", request_id=req.id, library_path=moved_path)
 
     if processed:
         await db.commit()
@@ -169,17 +173,17 @@ async def _build_library_path(db: AsyncSession, req: Request) -> str | None:
     return os.path.join(settings.library_path, folder)
 
 
-async def _move_nzbget_download(db: AsyncSession, req: Request, job: AcquisitionJob) -> bool:
+async def _move_nzbget_download(db: AsyncSession, req: Request, job: AcquisitionJob) -> str | None:
     """
     Look up the NZBGet DestDir for this job and move the folder into the library.
     Uses library_folder_pattern to name the destination folder.
-    Returns True if the files are in the library (moved or already present).
+    Returns the destination path if the files are in the library, or None on failure.
     """
     from trackforge.adapters.acquisition.nzbget import NZBGetClient
 
     if not job.external_id:
         log.warning("processing.no_external_id", job_id=job.id)
-        return False
+        return None
 
     if not settings.nzbget_complete_path:
         log.warning(
@@ -187,7 +191,7 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
             msg="Set NZBGET_COMPLETE_PATH in env to enable file moving",
             job_id=job.id,
         )
-        return False
+        return None
 
     nzbget = NZBGetClient(settings.nzbget_url, settings.nzbget_username, settings.nzbget_password)
     try:
@@ -195,17 +199,17 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
         group = await nzbget.get_group(nzbid)
     except Exception as e:
         log.error("processing.nzbget_lookup_failed", job_id=job.id, error=str(e))
-        return False
+        return None
 
     if not group:
         log.warning("processing.nzbget_group_not_found", job_id=job.id, nzbid=job.external_id)
-        return False
+        return None
 
     # FinalDir is set if a post-processing script moved the files; fall back to DestDir
     dest_dir = group.get("FinalDir") or group.get("DestDir")
     if not dest_dir:
         log.warning("processing.no_dest_dir", job_id=job.id)
-        return False
+        return None
 
     # Map NZBGet's reported path to the container-mounted path.
     folder_name = os.path.basename(dest_dir.rstrip("/"))
@@ -219,11 +223,11 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
     if os.path.exists(dst_path):
         log.info("processing.already_in_library", dst=dst_path, job_id=job.id)
         await _rename_files_in_folder(db, dst_path)
-        return True
+        return dst_path
 
     if not os.path.exists(src_path):
         log.warning("processing.source_not_found", src=src_path, job_id=job.id)
-        return False
+        return None
 
     # Ensure parent directories exist (e.g. Artist/ subfolder)
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
@@ -233,10 +237,10 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
         log.info("processing.moved", src=src_path, dst=dst_path, job_id=job.id)
         _fix_ownership(dst_path)
         await _rename_files_in_folder(db, dst_path)
-        return True
+        return dst_path
     except Exception as e:
         log.error("processing.move_failed", src=src_path, dst=dst_path, error=str(e), job_id=job.id)
-        return False
+        return None
 
 
 MEDIA_UID = 1000  # couchdaddy

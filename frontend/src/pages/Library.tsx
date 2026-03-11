@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
-import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem, jellyfinWebUrl } from '../api/library'
+import { jellyfinWebUrl } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
 const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties }> = {
@@ -16,7 +16,34 @@ const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties 
   cancelled:        { label: 'Cancelled', style: { background: '#1c1917', color: '#78716c' } },
 }
 
-type FilterType = 'all' | 'artist' | 'collection' | 'song' | 'jellyfin'
+type Section = 'requested' | 'downloading' | 'processing' | 'failed' | 'jellyfin'
+
+const SECTION_CONFIG: Record<Section, { label: string; color: string; emptyMsg: string }> = {
+  requested:   { label: 'Requested', color: '#fdba74', emptyMsg: 'No pending requests.' },
+  downloading: { label: 'Downloading', color: '#93c5fd', emptyMsg: 'Nothing downloading right now.' },
+  processing:  { label: 'Processing', color: '#93c5fd', emptyMsg: 'Nothing being processed.' },
+  failed:      { label: 'Failed', color: '#fca5a5', emptyMsg: 'No failed requests.' },
+  jellyfin:    { label: 'In Jellyfin', color: '#4ade80', emptyMsg: 'No items in Jellyfin yet.' },
+}
+
+function classifyEntry(entry: LibraryEntry): Section {
+  if (entry.jellyfin_item_id) return 'jellyfin'
+  switch (entry.status) {
+    case 'pending_approval':
+    case 'approved':
+    case 'searching':
+      return 'requested'
+    case 'downloading':
+      return 'downloading'
+    case 'processing':
+    case 'available':
+      return 'processing'
+    case 'failed':
+      return 'failed'
+    default:
+      return 'requested'
+  }
+}
 
 function StatusBadge({ status }: { status: string }) {
   const config = STATUS_CONFIG[status] ?? { label: status, style: { background: '#222', color: '#aaa' } }
@@ -183,7 +210,7 @@ function CandidatesModal({ requestId, entryName, entrySubtitle, onClose }: { req
   )
 }
 
-function EntryCard({ entry, isAdmin, jellyfinUrl }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null }) {
+function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
   const navigate = useNavigate()
   const [showCandidates, setShowCandidates] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
@@ -214,7 +241,7 @@ function EntryCard({ entry, isAdmin, jellyfinUrl }: { entry: LibraryEntry; isAdm
               Browse NZBs
             </button>
           )}
-          {entry.jellyfin_item_id && jellyfinUrl ? (
+          {section === 'jellyfin' && entry.jellyfin_item_id && jellyfinUrl ? (
             <a
               href={jellyfinWebUrl(jellyfinUrl, entry.jellyfin_item_id)}
               target="_blank"
@@ -236,41 +263,7 @@ function EntryCard({ entry, isAdmin, jellyfinUrl }: { entry: LibraryEntry; isAdm
   )
 }
 
-function JellyfinCard({ item, jellyfinUrl }: { item: RecentlyAddedItem; jellyfinUrl?: string | null }) {
-  const navigate = useNavigate()
-  const [resolving, setResolving] = useState(false)
-
-  async function handleClick() {
-    if (!item.jellyfin_item_id || resolving) return
-    setResolving(true)
-    try {
-      const resolved = await resolveJellyfinItem(item.jellyfin_item_id)
-      if (resolved) navigate(`/album/${resolved}`)
-    } finally {
-      setResolving(false)
-    }
-  }
-
-  return (
-    <div style={{ ...styles.card, cursor: 'pointer' }} onClick={handleClick}>
-      <CoverArt url={recentlyAddedArtUrl(item)} size={44} />
-      <div style={styles.cardLeft}>
-        <span style={styles.typeTag}>Album</span>
-        <div style={styles.cardTitle}>{item.name}</div>
-        <div style={styles.cardMeta}>
-          {[item.artist_name, item.year].filter(Boolean).join(' · ')}
-        </div>
-      </div>
-      {jellyfinUrl && item.jellyfin_item_id
-        ? <a href={jellyfinWebUrl(jellyfinUrl, item.jellyfin_item_id)} target="_blank" rel="noopener noreferrer" style={{ ...styles.badge, background: '#052e16', color: '#4ade80', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>Jellyfin ↗</a>
-        : <span style={{ ...styles.badge, background: '#052e16', color: '#4ade80' }}>In Library</span>
-      }
-    </div>
-  )
-}
-
 export default function Library() {
-  const [filter, setFilter] = useState<FilterType>('all')
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin' || user?.role === 'moderator'
 
@@ -280,43 +273,28 @@ export default function Library() {
     staleTime: 1000 * 30,
   })
 
-  const { data: jellyfinData } = useQuery({
-    queryKey: ['library', 'recently-added-all'],
-    queryFn: () => getRecentlyAdded(50),
-    staleTime: 1000 * 60 * 5,
-  })
-
   const entries = libraryData?.entries ?? []
-  const requestJellyfinUrl = libraryData?.jellyfin_url ?? null
-  const jellyfinItems = jellyfinData?.items ?? []
-  const jellyfinUrl = jellyfinData?.jellyfin_url ?? requestJellyfinUrl ?? null
+  const jellyfinUrl = libraryData?.jellyfin_url ?? null
 
-  const filtered = filter === 'jellyfin'
-    ? []
-    : entries.filter(e => filter === 'all' ? true : e.target_type === filter)
+  // Group into sections
+  const sections: Record<Section, LibraryEntry[]> = {
+    requested: [],
+    downloading: [],
+    processing: [],
+    failed: [],
+    jellyfin: [],
+  }
+  for (const entry of entries) {
+    sections[classifyEntry(entry)].push(entry)
+  }
 
-  const totalCount = filter === 'jellyfin'
-    ? jellyfinItems.length
-    : filter === 'all'
-      ? (filtered.length + jellyfinItems.length)
-      : filtered.length
+  const totalCount = entries.length
+  const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'failed', 'jellyfin']
+  const nonEmptySections = sectionOrder.filter(s => sections[s].length > 0)
 
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>Library</h1>
-
-      <div style={styles.filterRow}>
-        {(['all', 'artist', 'collection', 'song', 'jellyfin'] as FilterType[]).map(f => (
-          <button
-            key={f}
-            style={filter === f ? { ...styles.filterBtn, ...styles.filterBtnActive } : styles.filterBtn}
-            onClick={() => setFilter(f)}
-          >
-            {f === 'all' ? 'All' : f === 'artist' ? 'Artists' : f === 'collection' ? 'Albums' : f === 'song' ? 'Songs' : 'In Jellyfin'}
-          </button>
-        ))}
-        <span style={styles.count}>{totalCount} item{totalCount !== 1 ? 's' : ''}</span>
-      </div>
 
       {error && (
         <div style={styles.error}>Failed to load library. Check that the API is running.</div>
@@ -326,40 +304,27 @@ export default function Library() {
         <div style={styles.empty}>Loading...</div>
       )}
 
-      <div style={styles.list}>
-        {/* Jellyfin library items (shown first when filter is 'jellyfin', at bottom for 'all') */}
-        {filter === 'jellyfin' && jellyfinItems.map((item, i) => (
-          <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} jellyfinUrl={jellyfinUrl} />
-        ))}
-
-        {/* Request-based entries */}
-        {filtered.map(entry => (
-          <EntryCard key={entry.id} entry={entry} isAdmin={isAdmin} jellyfinUrl={jellyfinUrl} />
-        ))}
-
-        {/* Jellyfin items at the bottom for 'all' filter */}
-        {filter === 'all' && jellyfinItems.length > 0 && (
-          <>
-            <div style={styles.sectionDivider}>
-              <span style={styles.sectionLabel}>Jellyfin Library</span>
-              <span style={styles.sectionCount}>{jellyfinItems.length} album{jellyfinItems.length !== 1 ? 's' : ''}</span>
-            </div>
-            {jellyfinItems.map((item, i) => (
-              <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} jellyfinUrl={jellyfinUrl} />
-            ))}
-          </>
-        )}
-      </div>
-
       {!isFetching && totalCount === 0 && (
-        <div style={styles.empty}>
-          {filter === 'jellyfin'
-            ? 'No albums found in Jellyfin. Make sure Jellyfin is configured and the library has synced.'
-            : filter === 'all'
-              ? 'Nothing here yet. Use Search to request artists or albums.'
-              : `No ${filter === 'artist' ? 'artists' : filter === 'song' ? 'songs' : 'albums'} requested yet.`}
-        </div>
+        <div style={styles.empty}>Nothing here yet. Use Search to request albums.</div>
       )}
+
+      {nonEmptySections.map(section => {
+        const config = SECTION_CONFIG[section]
+        const items = sections[section]
+        return (
+          <div key={section} style={styles.section}>
+            <div style={styles.sectionDivider}>
+              <span style={{ ...styles.sectionLabel, color: config.color }}>{config.label}</span>
+              <span style={styles.sectionCount}>{items.length}</span>
+            </div>
+            <div style={styles.list}>
+              {items.map(entry => (
+                <EntryCard key={entry.id} entry={entry} isAdmin={isAdmin} jellyfinUrl={jellyfinUrl} section={section} />
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -376,30 +341,8 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '1.5rem',
     color: '#f0f0f0',
   },
-  filterRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
+  section: {
     marginBottom: '1.5rem',
-  },
-  filterBtn: {
-    padding: '0.35rem 0.875rem',
-    borderRadius: 6,
-    border: '1px solid #333',
-    background: '#1a1a1a',
-    color: '#aaa',
-    cursor: 'pointer',
-    fontSize: '0.825rem',
-  },
-  filterBtnActive: {
-    background: '#2563eb',
-    border: '1px solid #2563eb',
-    color: '#fff',
-  },
-  count: {
-    marginLeft: 'auto',
-    fontSize: '0.8rem',
-    color: '#555',
   },
   list: {
     display: 'flex',

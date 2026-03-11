@@ -61,3 +61,33 @@ export async function searchLibrary(query: string): Promise<LibrarySearchItem[]>
   const res = await api.get<{ items: LibrarySearchItem[] }>('/library/search', { params: { q: query } })
   return res.data.items
 }
+
+export interface JellyfinItem {
+  id: string
+  jellyfin_item_id: string
+  name: string
+  artist_name: string
+  year: number | null
+  mbid: string | null
+  release_mbid: string | null
+  artist_mbid: string | null
+  date_created: string | null
+}
+
+export interface JellyfinItemsResponse {
+  items: JellyfinItem[]
+  jellyfin_url: string | null
+  total: number
+}
+
+export async function getJellyfinItems(): Promise<JellyfinItemsResponse> {
+  const res = await api.get<JellyfinItemsResponse>('/library/items')
+  return res.data
+}
+
+export async function linkMusicBrainz(libraryItemId: string, releaseGroupMbid: string): Promise<JellyfinItem> {
+  const res = await api.post<JellyfinItem>(`/library/items/${libraryItemId}/link-musicbrainz`, {
+    release_group_mbid: releaseGroupMbid,
+  })
+  return res.data
+}

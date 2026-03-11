@@ -128,6 +128,98 @@ async def search_library(
     return LibrarySearchResponse(items=matches)
 
 
+class JellyfinItemResponse(BaseModel):
+    id: str
+    jellyfin_item_id: str
+    name: str
+    artist_name: str
+    year: int | None = None
+    mbid: str | None = None
+    release_mbid: str | None = None
+    artist_mbid: str | None = None
+    date_created: str | None = None
+
+
+class JellyfinItemsResponse(BaseModel):
+    items: list[JellyfinItemResponse]
+    jellyfin_url: str | None = None
+    total: int
+
+
+@router.get("/items", response_model=JellyfinItemsResponse)
+async def list_jellyfin_items(
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return all albums synced from Jellyfin."""
+    db_settings = await get_db_settings(db)
+    result = await db.execute(
+        select(LibraryItem).where(LibraryItem.jellyfin_item_id.isnot(None))
+    )
+    items = result.scalars().all()
+
+    entries = []
+    for item in items:
+        meta = item.metadata_ or {}
+        entries.append(JellyfinItemResponse(
+            id=item.id,
+            jellyfin_item_id=item.jellyfin_item_id,
+            name=meta.get("name", ""),
+            artist_name=meta.get("artist_name", ""),
+            year=meta.get("year"),
+            mbid=meta.get("mbid"),
+            release_mbid=meta.get("release_mbid"),
+            artist_mbid=meta.get("artist_mbid"),
+            date_created=meta.get("date_created"),
+        ))
+
+    # Sort by name for consistent display
+    entries.sort(key=lambda e: e.name.lower())
+
+    return JellyfinItemsResponse(
+        items=entries,
+        jellyfin_url=db_settings.get("jellyfin_external_url") or None,
+        total=len(entries),
+    )
+
+
+class LinkMusicBrainzBody(BaseModel):
+    release_group_mbid: str
+
+
+@router.post("/items/{item_id}/link-musicbrainz", response_model=JellyfinItemResponse)
+async def link_musicbrainz(
+    item_id: str,
+    body: LinkMusicBrainzBody,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Link a Jellyfin library item to a MusicBrainz release group (admin only)."""
+    result = await db.execute(
+        select(LibraryItem).where(LibraryItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Library item not found")
+
+    meta = dict(item.metadata_ or {})
+    meta["mbid"] = body.release_group_mbid
+    item.metadata_ = meta
+    await db.commit()
+
+    return JellyfinItemResponse(
+        id=item.id,
+        jellyfin_item_id=item.jellyfin_item_id,
+        name=meta.get("name", ""),
+        artist_name=meta.get("artist_name", ""),
+        year=meta.get("year"),
+        mbid=meta.get("mbid"),
+        release_mbid=meta.get("release_mbid"),
+        artist_mbid=meta.get("artist_mbid"),
+        date_created=meta.get("date_created"),
+    )
+
+
 class ScanResponse(BaseModel):
     synced: int
     resolved: int

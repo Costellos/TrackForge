@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, cancelRequest, NzbCandidate } from '../api/requests'
-import { jellyfinWebUrl, searchLibrary, LibrarySearchItem } from '../api/library'
+import { api } from '../api/client'
+import { jellyfinWebUrl, searchLibrary, LibrarySearchItem, getJellyfinItems, linkMusicBrainz } from '../api/library'
+import { search, ReleaseGroupResult } from '../api/search'
 import { useAuthStore } from '../stores/auth'
 
 const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties }> = {
@@ -302,15 +304,125 @@ function LinkModal({ requestId, entryName, onClose }: { requestId: string; entry
   )
 }
 
-function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
+interface DisplayEntry extends LibraryEntry {
+  _libraryItemId?: string  // set for pure Jellyfin library items (not from requests)
+  _isLibraryOnly?: boolean
+  _release_mbid?: string | null
+  _artist_mbid?: string | null
+}
+
+function LinkMusicBrainzModal({ item, onClose }: { item: DisplayEntry; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [query, setQuery] = useState(`${item.name} ${item.subtitle?.split(' · ')[0] ?? ''}`.trim())
+  const [results, setResults] = useState<ReleaseGroupResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [linking, setLinking] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSearch() {
+    if (!query.trim()) return
+    setSearching(true)
+    setError(null)
+    try {
+      const res = await search(query.trim(), 'album')
+      setResults((res.results ?? []) as ReleaseGroupResult[])
+    } catch {
+      setError('Search failed')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  async function handleLink(mbid: string) {
+    if (!item._libraryItemId) return
+    setLinking(mbid)
+    setError(null)
+    try {
+      await linkMusicBrainz(item._libraryItemId, mbid)
+      queryClient.invalidateQueries({ queryKey: ['jellyfinItems'] })
+      onClose()
+    } catch {
+      setError('Failed to link')
+    } finally {
+      setLinking(null)
+    }
+  }
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={modalStyles.modal} onClick={e => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <h3 style={modalStyles.title}>Link to MusicBrainz</h3>
+          <button style={modalStyles.closeBtn} onClick={onClose}>×</button>
+        </div>
+        <div style={modalStyles.artistRow}>
+          <div style={modalStyles.artistInputRow}>
+            <input
+              type="text"
+              placeholder="Search MusicBrainz..."
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              style={modalStyles.artistInput}
+            />
+            <button
+              style={modalStyles.artistSearchBtn}
+              disabled={!query.trim() || searching}
+              onClick={handleSearch}
+            >
+              {searching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+        </div>
+        {error && <div style={modalStyles.error}>{error}</div>}
+        {results.length === 0 && !searching && (
+          <div style={modalStyles.empty}>Search MusicBrainz to link this album.</div>
+        )}
+        <div style={modalStyles.list}>
+          {results.filter(rg => rg.mbid).map(rg => (
+            <div key={rg.mbid} style={modalStyles.candidate}>
+              <div style={modalStyles.candidateInfo}>
+                <div style={modalStyles.candidateTitle}>{rg.title}</div>
+                <div style={modalStyles.candidateMeta}>
+                  {[rg.artists?.[0]?.name, rg.first_release_date?.slice(0, 4), rg.type].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <button
+                style={modalStyles.selectBtn}
+                onClick={() => handleLink(rg.mbid!)}
+                disabled={linking !== null}
+              >
+                {linking === rg.mbid ? 'Linking...' : 'Link'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [showCandidates, setShowCandidates] = useState(false)
   const [showLink, setShowLink] = useState(false)
+  const [showMbLink, setShowMbLink] = useState(false)
   const [removing, setRemoving] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
   const meta = [entry.subtitle, entry.year].filter(Boolean).join(' · ')
   const isCollection = entry.target_type === 'collection'
+  const isLibraryOnly = entry._isLibraryOnly
+
+  // Cover art: prefer MBID, fall back to Jellyfin image proxy
+  let coverUrl: string | null = null
+  if (entry.mbid) {
+    coverUrl = `https://coverartarchive.org/release-group/${entry.mbid}/front-250`
+  } else if (entry._release_mbid) {
+    coverUrl = `https://coverartarchive.org/release/${entry._release_mbid}/front-250`
+  } else if (entry.jellyfin_item_id) {
+    coverUrl = `${api.defaults.baseURL}/library/image/${entry.jellyfin_item_id}`
+  }
 
   function handleClick() {
     if (entry.mbid) {
@@ -335,14 +447,14 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
   return (
     <>
       <div style={styles.card} onClick={handleClick}>
-        {isCollection && <CoverArt url={entry.mbid ? `https://coverartarchive.org/release-group/${entry.mbid}/front-250` : null} size={44} />}
+        {isCollection && <CoverArt url={coverUrl} size={44} />}
         <div style={styles.cardLeft}>
           <span style={styles.typeTag}>{typeLabel}</span>
           <div style={styles.cardTitle}>{entry.name}</div>
           {meta && <div style={styles.cardMeta}>{meta}</div>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {section !== 'jellyfin' && (
+          {section !== 'jellyfin' && !isLibraryOnly && (
             <button
               style={styles.removeBtn}
               onClick={handleRemove}
@@ -357,6 +469,14 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
               onClick={e => { e.stopPropagation(); setShowLink(true) }}
             >
               Link
+            </button>
+          )}
+          {isLibraryOnly && !entry.mbid && isAdmin && (
+            <button
+              style={styles.linkBtn}
+              onClick={e => { e.stopPropagation(); setShowMbLink(true) }}
+            >
+              Link to MB
             </button>
           )}
           {entry.status === 'failed' && isAdmin && (
@@ -388,6 +508,9 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
       {showLink && (
         <LinkModal requestId={entry.id} entryName={entry.name} onClose={() => setShowLink(false)} />
       )}
+      {showMbLink && (
+        <LinkMusicBrainzModal item={entry} onClose={() => setShowMbLink(false)} />
+      )}
     </>
   )
 }
@@ -402,11 +525,17 @@ export default function Library() {
     staleTime: 1000 * 30,
   })
 
+  const { data: jellyfinData } = useQuery({
+    queryKey: ['jellyfinItems'],
+    queryFn: getJellyfinItems,
+    staleTime: 1000 * 60,
+  })
+
   const entries = libraryData?.entries ?? []
-  const jellyfinUrl = libraryData?.jellyfin_url ?? null
+  const jellyfinUrl = jellyfinData?.jellyfin_url ?? libraryData?.jellyfin_url ?? null
 
   // Group into sections
-  const sections: Record<Section, LibraryEntry[]> = {
+  const sections: Record<Section, DisplayEntry[]> = {
     requested: [],
     downloading: [],
     processing: [],
@@ -418,7 +547,35 @@ export default function Library() {
     sections[classifyEntry(entry)].push(entry)
   }
 
-  const totalCount = entries.length
+  // Merge Jellyfin library items not already represented by requests
+  const requestJfIds = new Set(
+    sections.jellyfin.map(e => e.jellyfin_item_id).filter(Boolean)
+  )
+  for (const item of jellyfinData?.items ?? []) {
+    if (requestJfIds.has(item.jellyfin_item_id)) continue
+    sections.jellyfin.push({
+      id: item.id,
+      target_type: 'collection',
+      target_id: item.id,
+      status: 'available',
+      user_notes: null,
+      created_at: item.date_created ?? '',
+      name: item.name,
+      subtitle: item.artist_name,
+      year: item.year ? String(item.year) : null,
+      requested_by: null,
+      mbid: item.mbid,
+      jellyfin_item_id: item.jellyfin_item_id,
+      _libraryItemId: item.id,
+      _isLibraryOnly: true,
+      _release_mbid: item.release_mbid,
+      _artist_mbid: item.artist_mbid,
+    })
+  }
+
+  const totalCount = entries.length + (jellyfinData?.items ?? []).filter(
+    item => !requestJfIds.has(item.jellyfin_item_id)
+  ).length
   const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'available', 'failed', 'jellyfin']
   const nonEmptySections = sectionOrder.filter(s => sections[s].length > 0)
 

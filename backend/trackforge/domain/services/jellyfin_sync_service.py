@@ -115,6 +115,10 @@ async def sync_jellyfin_library(db: AsyncSession) -> int:
         if jf_id in existing:
             item = existing[jf_id]
             item.last_seen_at = now
+            # Preserve manually linked MBIDs if Jellyfin doesn't provide one
+            old_meta = item.metadata_ or {}
+            if not metadata["mbid"] and old_meta.get("mbid"):
+                metadata["mbid"] = old_meta["mbid"]
             item.metadata_ = metadata
             item.file_path = album.get("Path")
         else:

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, cancelRequest, NzbCandidate } from '../api/requests'
 import { api } from '../api/client'
-import { jellyfinWebUrl, searchLibrary, LibrarySearchItem, getJellyfinItems, linkMusicBrainz } from '../api/library'
+import { jellyfinWebUrl, searchLibrary, LibrarySearchItem, getJellyfinItems, linkMusicBrainz, unlinkMusicBrainz } from '../api/library'
 import { search, ReleaseGroupResult } from '../api/search'
 import { useAuthStore } from '../stores/auth'
 
@@ -408,6 +408,7 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
   const [showCandidates, setShowCandidates] = useState(false)
   const [showLink, setShowLink] = useState(false)
   const [showMbLink, setShowMbLink] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
   const [removing, setRemoving] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
   const meta = [entry.subtitle, entry.year].filter(Boolean).join(' · ')
@@ -427,6 +428,21 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
   function handleClick() {
     if (entry.mbid) {
       navigate(isCollection ? `/album/${entry.mbid}` : `/artist/${entry.mbid}`)
+    }
+  }
+
+  async function handleUnlinkMb(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!entry._libraryItemId) return
+    if (!confirm(`Unlink MusicBrainz from "${entry.name}"?`)) return
+    setUnlinking(true)
+    try {
+      await unlinkMusicBrainz(entry._libraryItemId)
+      queryClient.invalidateQueries({ queryKey: ['jellyfinItems'] })
+    } catch {
+      // ignore
+    } finally {
+      setUnlinking(false)
     }
   }
 
@@ -471,13 +487,30 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: DisplayEnt
               Link
             </button>
           )}
-          {isLibraryOnly && !entry.mbid && isAdmin && (
+          {isLibraryOnly && isAdmin && !entry.mbid && (
             <button
               style={styles.linkBtn}
               onClick={e => { e.stopPropagation(); setShowMbLink(true) }}
             >
               Link to MB
             </button>
+          )}
+          {isLibraryOnly && isAdmin && entry.mbid && (
+            <>
+              <button
+                style={styles.unlinkBtn}
+                onClick={handleUnlinkMb}
+                disabled={unlinking}
+              >
+                {unlinking ? '...' : 'Unlink MB'}
+              </button>
+              <button
+                style={styles.linkBtn}
+                onClick={e => { e.stopPropagation(); setShowMbLink(true) }}
+              >
+                Relink
+              </button>
+            </>
           )}
           {entry.status === 'failed' && isAdmin && (
             <button
@@ -729,6 +762,17 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #2563eb',
     background: '#1e3a5f',
     color: '#93c5fd',
+    cursor: 'pointer',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+  unlinkBtn: {
+    padding: '0.3rem 0.65rem',
+    borderRadius: 5,
+    border: '1px solid #92400e',
+    background: '#422006',
+    color: '#fbbf24',
     cursor: 'pointer',
     fontSize: '0.75rem',
     fontWeight: 500,

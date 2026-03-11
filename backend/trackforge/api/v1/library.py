@@ -220,6 +220,38 @@ async def link_musicbrainz(
     )
 
 
+@router.post("/items/{item_id}/unlink-musicbrainz", response_model=JellyfinItemResponse)
+async def unlink_musicbrainz(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Remove the MusicBrainz link from a Jellyfin library item (admin only)."""
+    result = await db.execute(
+        select(LibraryItem).where(LibraryItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Library item not found")
+
+    meta = dict(item.metadata_ or {})
+    meta.pop("mbid", None)
+    item.metadata_ = meta
+    await db.commit()
+
+    return JellyfinItemResponse(
+        id=item.id,
+        jellyfin_item_id=item.jellyfin_item_id,
+        name=meta.get("name", ""),
+        artist_name=meta.get("artist_name", ""),
+        year=meta.get("year"),
+        mbid=meta.get("mbid"),
+        release_mbid=meta.get("release_mbid"),
+        artist_mbid=meta.get("artist_mbid"),
+        date_created=meta.get("date_created"),
+    )
+
+
 class ScanResponse(BaseModel):
     synced: int
     resolved: int

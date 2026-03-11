@@ -91,3 +91,8 @@ export async function linkMusicBrainz(libraryItemId: string, releaseGroupMbid: s
   })
   return res.data
 }
+
+export async function unlinkMusicBrainz(libraryItemId: string): Promise<JellyfinItem> {
+  const res = await api.post<JellyfinItem>(`/library/items/${libraryItemId}/unlink-musicbrainz`)
+  return res.data
+}

@@ -204,6 +204,7 @@ async def link_musicbrainz(
 
     meta = dict(item.metadata_ or {})
     meta["mbid"] = body.release_group_mbid
+    meta["manual_mbid"] = True
     item.metadata_ = meta
     await db.commit()
 
@@ -236,6 +237,7 @@ async def unlink_musicbrainz(
 
     meta = dict(item.metadata_ or {})
     meta.pop("mbid", None)
+    meta.pop("manual_mbid", None)
     item.metadata_ = meta
     await db.commit()
 

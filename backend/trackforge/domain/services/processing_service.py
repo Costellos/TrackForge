@@ -239,12 +239,12 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
         return False
 
 
-MEDIA_UID = 0     # root
+MEDIA_UID = 1000  # couchdaddy
 MEDIA_GID = 1000  # couchdaddy
 
 
 def _fix_ownership(path: str) -> None:
-    """Set ownership to root:couchdaddy (0:1000) with group read/write on moved files."""
+    """Set ownership to couchdaddy:couchdaddy (1000:1000) with group read/write on moved files."""
     try:
         os.chown(path, MEDIA_UID, MEDIA_GID)
         os.chmod(path, 0o775)

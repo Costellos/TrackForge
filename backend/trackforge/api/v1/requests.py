@@ -666,8 +666,8 @@ async def cancel_request(
         raise HTTPException(status_code=404, detail="Request not found")
     if user.role not in ("admin", "moderator") and request.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not your request")
-    if request.status in ("available", "cancelled"):
-        raise HTTPException(status_code=400, detail=f"Cannot cancel a {request.status} request")
+    if request.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Request is already cancelled")
 
     request.status = "cancelled"
     request.updated_at = datetime.now(timezone.utc)

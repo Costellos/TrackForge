@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, NzbCandidate } from '../api/requests'
+import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, cancelRequest, NzbCandidate } from '../api/requests'
 import { jellyfinWebUrl, searchLibrary, LibrarySearchItem } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
@@ -16,12 +16,13 @@ const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties 
   cancelled:        { label: 'Cancelled', style: { background: '#1c1917', color: '#78716c' } },
 }
 
-type Section = 'requested' | 'downloading' | 'processing' | 'failed' | 'jellyfin'
+type Section = 'requested' | 'downloading' | 'processing' | 'available' | 'failed' | 'jellyfin'
 
 const SECTION_CONFIG: Record<Section, { label: string; color: string; emptyMsg: string }> = {
   requested:   { label: 'Requested', color: '#fdba74', emptyMsg: 'No pending requests.' },
   downloading: { label: 'Downloading', color: '#93c5fd', emptyMsg: 'Nothing downloading right now.' },
   processing:  { label: 'Processing', color: '#93c5fd', emptyMsg: 'Nothing being processed.' },
+  available:   { label: 'Available', color: '#86efac', emptyMsg: 'No available items.' },
   failed:      { label: 'Failed', color: '#fca5a5', emptyMsg: 'No failed requests.' },
   jellyfin:    { label: 'In Jellyfin', color: '#4ade80', emptyMsg: 'No items in Jellyfin yet.' },
 }
@@ -36,8 +37,9 @@ function classifyEntry(entry: LibraryEntry): Section {
     case 'downloading':
       return 'downloading'
     case 'processing':
-    case 'available':
       return 'processing'
+    case 'available':
+      return 'available'
     case 'failed':
       return 'failed'
     default:
@@ -302,8 +304,10 @@ function LinkModal({ requestId, entryName, onClose }: { requestId: string; entry
 
 function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEntry; isAdmin: boolean; jellyfinUrl?: string | null; section: Section }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [showCandidates, setShowCandidates] = useState(false)
   const [showLink, setShowLink] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const typeLabel = entry.target_type === 'artist' ? 'Artist' : entry.target_type === 'song' ? 'Song' : 'Album'
   const meta = [entry.subtitle, entry.year].filter(Boolean).join(' · ')
   const isCollection = entry.target_type === 'collection'
@@ -311,6 +315,20 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
   function handleClick() {
     if (entry.mbid) {
       navigate(isCollection ? `/album/${entry.mbid}` : `/artist/${entry.mbid}`)
+    }
+  }
+
+  async function handleRemove(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm(`Remove "${entry.name}" from your library?`)) return
+    setRemoving(true)
+    try {
+      await cancelRequest(entry.id)
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+    } catch {
+      // ignore
+    } finally {
+      setRemoving(false)
     }
   }
 
@@ -324,6 +342,15 @@ function EntryCard({ entry, isAdmin, jellyfinUrl, section }: { entry: LibraryEnt
           {meta && <div style={styles.cardMeta}>{meta}</div>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {section !== 'jellyfin' && (
+            <button
+              style={styles.removeBtn}
+              onClick={handleRemove}
+              disabled={removing}
+            >
+              {removing ? '...' : '×'}
+            </button>
+          )}
           {entry.status === 'available' && !entry.jellyfin_item_id && isAdmin && (
             <button
               style={styles.linkBtn}
@@ -383,6 +410,7 @@ export default function Library() {
     requested: [],
     downloading: [],
     processing: [],
+    available: [],
     failed: [],
     jellyfin: [],
   }
@@ -391,7 +419,7 @@ export default function Library() {
   }
 
   const totalCount = entries.length
-  const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'failed', 'jellyfin']
+  const sectionOrder: Section[] = ['requested', 'downloading', 'processing', 'available', 'failed', 'jellyfin']
   const nonEmptySections = sectionOrder.filter(s => sections[s].length > 0)
 
   return (
@@ -548,6 +576,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.75rem',
     fontWeight: 500,
     whiteSpace: 'nowrap',
+  },
+  removeBtn: {
+    padding: '0.15rem 0.45rem',
+    borderRadius: 4,
+    border: '1px solid #333',
+    background: 'transparent',
+    color: '#666',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    lineHeight: 1,
   },
 }
 

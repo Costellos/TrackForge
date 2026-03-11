@@ -231,11 +231,34 @@ async def _move_nzbget_download(db: AsyncSession, req: Request, job: Acquisition
     try:
         shutil.move(src_path, dst_path)
         log.info("processing.moved", src=src_path, dst=dst_path, job_id=job.id)
+        _fix_ownership(dst_path)
         await _rename_files_in_folder(db, dst_path)
         return True
     except Exception as e:
         log.error("processing.move_failed", src=src_path, dst=dst_path, error=str(e), job_id=job.id)
         return False
+
+
+MEDIA_UID = 0     # root
+MEDIA_GID = 1000  # couchdaddy
+
+
+def _fix_ownership(path: str) -> None:
+    """Set ownership to root:couchdaddy (0:1000) with group read/write on moved files."""
+    try:
+        os.chown(path, MEDIA_UID, MEDIA_GID)
+        os.chmod(path, 0o775)
+        for root, dirs, files in os.walk(path):
+            for d in dirs:
+                dp = os.path.join(root, d)
+                os.chown(dp, MEDIA_UID, MEDIA_GID)
+                os.chmod(dp, 0o775)
+            for f in files:
+                fp = os.path.join(root, f)
+                os.chown(fp, MEDIA_UID, MEDIA_GID)
+                os.chmod(fp, 0o664)
+    except Exception as e:
+        log.warning("processing.chown_failed", path=path, error=str(e))
 
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wma", ".wav", ".aac", ".alac"}

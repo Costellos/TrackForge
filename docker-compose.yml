@@ -45,6 +45,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: "0:1000"
     command: ["arq", "trackforge.worker.settings.WorkerSettings"]
     depends_on:
       db:

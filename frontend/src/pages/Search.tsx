@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { search, SearchType, ArtistResult, ReleaseGroupResult, RecordingResult, getArtistImages } from '../api/search'
 import { requestCollection, checkMbidStatuses } from '../api/requests'
-import { checkLibraryStatus } from '../api/library'
+import { checkLibraryStatus, jellyfinWebUrl } from '../api/library'
 
 function formatDuration(ms: number | null): string {
   if (!ms) return ''
@@ -98,7 +98,7 @@ function ArtistCard({ artist }: { artist: ArtistResult }) {
   )
 }
 
-function AlbumCard({ album, initialState, inLibrary }: { album: ReleaseGroupResult; initialState?: RequestState; inLibrary?: boolean }) {
+function AlbumCard({ album, initialState, inLibrary, jellyfinLink }: { album: ReleaseGroupResult; initialState?: RequestState; inLibrary?: boolean; jellyfinLink?: string | null }) {
   const navigate = useNavigate()
   const artistNames = album.artists.map(a => a.name).join(', ')
   const year = album.first_release_date?.slice(0, 4)
@@ -118,7 +118,10 @@ function AlbumCard({ album, initialState, inLibrary }: { album: ReleaseGroupResu
       </div>
       <div style={styles.cardActions}>
         {inLibrary
-          ? <span style={styles.inLibraryTag}>In Library</span>
+          ? <>
+              <span style={styles.inLibraryTag}>In Library</span>
+              {jellyfinLink && <a href={jellyfinLink} target="_blank" rel="noopener noreferrer" style={styles.jellyfinLink}>Jellyfin ↗</a>}
+            </>
           : <RequestButton onRequest={async () => { await requestCollection(album) }} initialState={initialState} />
         }
         <button style={styles.viewBtn} onClick={() => navigate(`/album/${album.mbid}`)}>
@@ -173,7 +176,7 @@ export default function Search() {
     staleTime: 1000 * 30,
   })
 
-  const { data: libraryData } = useQuery({
+  const { data: libraryResult } = useQuery({
     queryKey: ['library-statuses', mbids],
     queryFn: () => checkLibraryStatus(mbids),
     enabled: mbids.length > 0,
@@ -238,7 +241,11 @@ export default function Search() {
             const mbid = (result as { mbid: string }).mbid
             const initialState = statusToRequestState(statusData?.[mbid])
             if (type === 'artist') return <ArtistCard key={i} artist={result as ArtistResult} />
-            if (type === 'album') return <AlbumCard key={i} album={result as ReleaseGroupResult} initialState={initialState} inLibrary={libraryData?.[mbid] === true} />
+            if (type === 'album') {
+              const jfItemId = libraryResult?.statuses[mbid]
+              const jfLink = jfItemId && libraryResult?.jellyfin_url ? jellyfinWebUrl(libraryResult.jellyfin_url, jfItemId) : null
+              return <AlbumCard key={i} album={result as ReleaseGroupResult} initialState={initialState} inLibrary={!!jfItemId} jellyfinLink={jfLink} />
+            }
             if (type === 'song') return <SongCard key={i} recording={result as RecordingResult} />
             return null
           })}
@@ -322,6 +329,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.65rem', fontWeight: 600, textTransform: 'uppercase',
     letterSpacing: '0.05em', color: '#4ade80', background: '#052e16',
     border: '1px solid #166534', borderRadius: 4, padding: '0.1rem 0.4rem', lineHeight: 1.5,
+  },
+  jellyfinLink: {
+    fontSize: '0.75rem', color: '#93c5fd', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
   },
   error: { color: '#ef4444', padding: '1rem', background: '#1a1a1a', borderRadius: 8 },
   empty: { color: '#666', textAlign: 'center', padding: '2rem' },

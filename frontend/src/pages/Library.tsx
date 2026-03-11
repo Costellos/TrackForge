@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, NzbCandidate } from '../api/requests'
-import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem } from '../api/library'
+import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem, jellyfinWebUrl } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
 const STATUS_CONFIG: Record<string, { label: string; style: React.CSSProperties }> = {
@@ -224,7 +224,7 @@ function EntryCard({ entry, isAdmin }: { entry: LibraryEntry; isAdmin: boolean }
   )
 }
 
-function JellyfinCard({ item }: { item: RecentlyAddedItem }) {
+function JellyfinCard({ item, jellyfinUrl }: { item: RecentlyAddedItem; jellyfinUrl?: string | null }) {
   const navigate = useNavigate()
   const [resolving, setResolving] = useState(false)
 
@@ -249,7 +249,10 @@ function JellyfinCard({ item }: { item: RecentlyAddedItem }) {
           {[item.artist_name, item.year].filter(Boolean).join(' · ')}
         </div>
       </div>
-      <span style={{ ...styles.badge, background: '#052e16', color: '#4ade80' }}>In Library</span>
+      {jellyfinUrl && item.jellyfin_item_id
+        ? <a href={jellyfinWebUrl(jellyfinUrl, item.jellyfin_item_id)} target="_blank" rel="noopener noreferrer" style={{ ...styles.badge, background: '#052e16', color: '#4ade80', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>Jellyfin ↗</a>
+        : <span style={{ ...styles.badge, background: '#052e16', color: '#4ade80' }}>In Library</span>
+      }
     </div>
   )
 }
@@ -271,7 +274,8 @@ export default function Library() {
     staleTime: 1000 * 60 * 5,
   })
 
-  const jellyfinItems = jellyfinData ?? []
+  const jellyfinItems = jellyfinData?.items ?? []
+  const jellyfinUrl = jellyfinData?.jellyfin_url ?? null
 
   const filtered = filter === 'jellyfin'
     ? []
@@ -311,7 +315,7 @@ export default function Library() {
       <div style={styles.list}>
         {/* Jellyfin library items (shown first when filter is 'jellyfin', at bottom for 'all') */}
         {filter === 'jellyfin' && jellyfinItems.map((item, i) => (
-          <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} />
+          <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} jellyfinUrl={jellyfinUrl} />
         ))}
 
         {/* Request-based entries */}
@@ -327,7 +331,7 @@ export default function Library() {
               <span style={styles.sectionCount}>{jellyfinItems.length} album{jellyfinItems.length !== 1 ? 's' : ''}</span>
             </div>
             {jellyfinItems.map((item, i) => (
-              <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} />
+              <JellyfinCard key={item.jellyfin_item_id ?? i} item={item} jellyfinUrl={jellyfinUrl} />
             ))}
           </>
         )}

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getArtist, getAlbumTracks, ReleaseGroupResult } from '../api/search'
 import { requestCollection, checkMbidStatuses } from '../api/requests'
-import { checkLibraryStatus } from '../api/library'
+import { checkLibraryStatus, jellyfinWebUrl } from '../api/library'
 import PreviewButton from '../components/PreviewButton'
 
 type RequestState = 'idle' | 'loading' | 'done' | 'duplicate' | 'error'
@@ -145,7 +145,7 @@ export default function ArtistPage() {
     staleTime: 1000 * 30,
   })
 
-  const { data: libraryData } = useQuery({
+  const { data: libraryResult } = useQuery({
     queryKey: ['library-statuses', albumMbids],
     queryFn: () => checkLibraryStatus(albumMbids),
     enabled: albumMbids.length > 0,
@@ -219,7 +219,9 @@ export default function ArtistPage() {
                 {grouped[groupName].map((album, i) => {
                   const secondaryLabel = album.secondary_types.filter(Boolean).join(' · ')
                   const year = album.first_release_date?.slice(0, 4)
-                  const inLibrary = libraryData?.[album.mbid ?? ''] === true
+                  const jfItemId = libraryResult?.statuses[album.mbid ?? ''] ?? null
+                  const inLibrary = !!jfItemId
+                  const jellyfinLink = jfItemId && libraryResult?.jellyfin_url ? jellyfinWebUrl(libraryResult.jellyfin_url, jfItemId) : null
                   const initialState = inLibrary ? 'done' as RequestState : statusToRequestState(statusData?.[album.mbid ?? ''])
                   const isExpanded = expandedMbid === album.mbid
                   return (
@@ -236,7 +238,10 @@ export default function ArtistPage() {
                         </div>
                         <div style={styles.rowActions}>
                           {inLibrary
-                            ? <span style={styles.inLibraryTag}>In Library</span>
+                            ? <>
+                                <span style={styles.inLibraryTag}>In Library</span>
+                                {jellyfinLink && <a href={jellyfinLink} target="_blank" rel="noopener noreferrer" style={styles.jellyfinLink}>Jellyfin ↗</a>}
+                              </>
                             : <RequestButton
                                 onRequest={async () => { await requestCollection(album) }}
                                 initialState={initialState}
@@ -454,6 +459,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     padding: '0.1rem 0.4rem',
     lineHeight: 1.5,
+  },
+  jellyfinLink: {
+    fontSize: '0.75rem', color: '#93c5fd', textDecoration: 'none', whiteSpace: 'nowrap',
   },
   empty: { color: '#555', textAlign: 'center', padding: '3rem 0' },
 }

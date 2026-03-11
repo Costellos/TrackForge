@@ -19,8 +19,13 @@ export function recentlyAddedArtUrl(item: RecentlyAddedItem): string | null {
   return null
 }
 
-export async function getRecentlyAdded(limit = 20): Promise<RecentlyAddedItem[]> {
-  const res = await api.get<RecentlyAddedItem[]>('/library/recently-added', { params: { limit } })
+export interface RecentlyAddedResponse {
+  items: RecentlyAddedItem[]
+  jellyfin_url: string | null
+}
+
+export async function getRecentlyAdded(limit = 20): Promise<RecentlyAddedResponse> {
+  const res = await api.get<RecentlyAddedResponse>('/library/recently-added', { params: { limit } })
   return res.data
 }
 
@@ -29,8 +34,18 @@ export async function resolveJellyfinItem(jellyfinItemId: string): Promise<strin
   return res.data.release_group_mbid
 }
 
-export async function checkLibraryStatus(mbids: string[]): Promise<Record<string, boolean>> {
-  if (mbids.length === 0) return {}
-  const res = await api.post<{ statuses: Record<string, boolean> }>('/library/status', { mbids })
-  return res.data.statuses
+export interface LibraryStatusResult {
+  statuses: Record<string, string | null>
+  jellyfin_url: string | null
+}
+
+export async function checkLibraryStatus(mbids: string[]): Promise<LibraryStatusResult> {
+  if (mbids.length === 0) return { statuses: {}, jellyfin_url: null }
+  const res = await api.post<LibraryStatusResult>('/library/status', { mbids })
+  return res.data
+}
+
+/** Build the Jellyfin web URL for an item. */
+export function jellyfinWebUrl(baseUrl: string, itemId: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/web/index.html#!/details?id=${itemId}`
 }

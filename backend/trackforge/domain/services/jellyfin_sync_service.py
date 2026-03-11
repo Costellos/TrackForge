@@ -198,13 +198,13 @@ async def get_recently_added(db: AsyncSession, limit: int = 20) -> list[dict]:
     return entries
 
 
-async def check_library_status(db: AsyncSession, mbids: list[str]) -> dict[str, bool]:
+async def check_library_status(db: AsyncSession, mbids: list[str]) -> dict[str, str | None]:
     """
-    Given a list of MusicBrainz release-group MBIDs, return which ones
-    are already in the Jellyfin library.
+    Given a list of MusicBrainz release-group MBIDs, return a mapping of
+    MBID → jellyfin_item_id (or None if not in library).
     """
     if not mbids:
         return {}
 
     library_mbids = await get_library_mbids(db)
-    return {mbid: mbid in library_mbids for mbid in mbids}
+    return {mbid: library_mbids.get(mbid) for mbid in mbids}

@@ -43,18 +43,28 @@ class LibraryStatusBody(BaseModel):
 
 
 class LibraryStatusResponse(BaseModel):
-    statuses: dict[str, bool]
+    statuses: dict[str, str | None]
+    jellyfin_url: str | None = None
 
 
-@router.get("/recently-added", response_model=list[RecentlyAddedItem])
+class RecentlyAddedResponse(BaseModel):
+    items: list[RecentlyAddedItem]
+    jellyfin_url: str | None = None
+
+
+@router.get("/recently-added", response_model=RecentlyAddedResponse)
 async def recently_added(
     limit: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     """Return recently added albums from the Jellyfin library."""
+    settings = get_settings()
     items = await get_recently_added(db, limit=limit)
-    return items
+    return RecentlyAddedResponse(
+        items=items,
+        jellyfin_url=settings.jellyfin_url or None,
+    )
 
 
 @router.post("/status", response_model=LibraryStatusResponse)
@@ -67,8 +77,12 @@ async def library_status(
     Given a list of MusicBrainz release-group MBIDs, return which ones
     are already in the Jellyfin library.
     """
+    settings = get_settings()
     statuses = await check_library_status(db, body.mbids)
-    return LibraryStatusResponse(statuses=statuses)
+    return LibraryStatusResponse(
+        statuses=statuses,
+        jellyfin_url=settings.jellyfin_url or None,
+    )
 
 
 @router.get("/image/{jellyfin_item_id}")

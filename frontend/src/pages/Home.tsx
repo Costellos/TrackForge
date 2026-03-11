@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry } from '../api/requests'
 import { getArtistImages } from '../api/search'
 import { getTrendingReleaseGroups, getTrendingArtists, TrendingReleaseGroup, TrendingArtist } from '../api/trending'
-import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem } from '../api/library'
+import { getRecentlyAdded, RecentlyAddedItem, recentlyAddedArtUrl, resolveJellyfinItem, jellyfinWebUrl } from '../api/library'
 import { useAuthStore } from '../stores/auth'
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -156,7 +156,7 @@ function TrendingArtistCard({ item }: { item: TrendingArtist }) {
   )
 }
 
-function RecentlyAddedCard({ item }: { item: RecentlyAddedItem }) {
+function RecentlyAddedCard({ item, jellyfinUrl }: { item: RecentlyAddedItem; jellyfinUrl?: string | null }) {
   const navigate = useNavigate()
   const [resolving, setResolving] = useState(false)
 
@@ -179,12 +179,13 @@ function RecentlyAddedCard({ item }: { item: RecentlyAddedItem }) {
       <div style={styles.cardBody}>
         <div style={styles.cardTitle}>{item.name}</div>
         <div style={styles.cardSub}>{item.artist_name}</div>
-        {item.year && (
-          <div style={styles.cardMeta}>
-            <span>{item.year}</span>
-            <span style={styles.inLibraryBadge}>In Library</span>
-          </div>
-        )}
+        <div style={styles.cardMeta}>
+          {item.year && <span>{item.year}</span>}
+          {jellyfinUrl && item.jellyfin_item_id
+            ? <a href={jellyfinWebUrl(jellyfinUrl, item.jellyfin_item_id)} target="_blank" rel="noopener noreferrer" style={{ ...styles.inLibraryBadge, textDecoration: 'none' }} onClick={e => e.stopPropagation()}>Jellyfin ↗</a>
+            : <span style={styles.inLibraryBadge}>In Library</span>
+          }
+        </div>
       </div>
     </div>
   )
@@ -246,7 +247,8 @@ export default function Home() {
   })
 
   const entries = libraryData ?? []
-  const recentlyAddedItems = recentlyAddedData ?? []
+  const recentlyAddedItems = recentlyAddedData?.items ?? []
+  const jellyfinUrl = recentlyAddedData?.jellyfin_url ?? null
 
   // Library sections
   const recentlyAvailable = entries.filter(e => e.status === 'available').slice(0, 20)
@@ -293,7 +295,7 @@ export default function Home() {
       {recentlyAddedItems.length > 0 && (
         <ScrollRow title="Recently Added to Library">
           {recentlyAddedItems.map((item, i) => (
-            <RecentlyAddedCard key={item.jellyfin_item_id ?? i} item={item} />
+            <RecentlyAddedCard key={item.jellyfin_item_id ?? i} item={item} jellyfinUrl={jellyfinUrl} />
           ))}
         </ScrollRow>
       )}

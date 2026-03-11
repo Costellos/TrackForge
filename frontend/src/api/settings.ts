@@ -5,6 +5,13 @@ export interface AppSettings {
   require_approval: boolean
   library_folder_pattern: string
   file_naming_pattern: string
+  jellyfin_external_url: string
+  jellyfin_scan_interval: number
+}
+
+export interface ScanResult {
+  synced: number
+  resolved: number
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -14,6 +21,11 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function updateSettings(data: Partial<AppSettings>): Promise<AppSettings> {
   const res = await api.patch<AppSettings>('/settings', data)
+  return res.data
+}
+
+export async function triggerScan(): Promise<ScanResult> {
+  const res = await api.post<ScanResult>('/library/scan')
   return res.data
 }
 

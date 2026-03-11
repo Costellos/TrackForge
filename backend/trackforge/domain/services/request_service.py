@@ -93,6 +93,11 @@ async def get_or_create_collection(
     if ext_id:
         collection = await db.get(Collection, ext_id.entity_id)
         if collection:
+            # Backfill primary artist if it was missing when first created
+            if not collection.primary_artist_id and artist_mbid and artist_name:
+                artist = await get_or_create_artist(db, artist_mbid, artist_name)
+                collection.primary_artist_id = artist.id
+                await db.flush()
             return collection
 
     # Resolve or create the primary artist if provided

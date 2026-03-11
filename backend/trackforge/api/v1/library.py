@@ -13,14 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trackforge.adapters.library.jellyfin import JellyfinClient
 from trackforge.adapters.metadata import musicbrainz as mb
-from trackforge.api.deps import get_current_user
+from trackforge.api.deps import get_current_user, require_admin
 from trackforge.config import get_settings
 from trackforge.database import get_db
 from trackforge.db.models import LibraryItem, User
 from trackforge.domain.services.jellyfin_sync_service import (
+    auto_resolve_requests,
     check_library_status,
     get_recently_added,
+    sync_jellyfin_library,
 )
+from trackforge.domain.services.settings_service import get_all_settings as get_db_settings
 
 log = structlog.get_logger()
 
@@ -59,11 +62,11 @@ async def recently_added(
     _user: User = Depends(get_current_user),
 ):
     """Return recently added albums from the Jellyfin library."""
-    settings = get_settings()
+    db_settings = await get_db_settings(db)
     items = await get_recently_added(db, limit=limit)
     return RecentlyAddedResponse(
         items=items,
-        jellyfin_url=settings.jellyfin_url or None,
+        jellyfin_url=db_settings.get("jellyfin_external_url") or None,
     )
 
 
@@ -77,12 +80,28 @@ async def library_status(
     Given a list of MusicBrainz release-group MBIDs, return which ones
     are already in the Jellyfin library.
     """
-    settings = get_settings()
+    db_settings = await get_db_settings(db)
     statuses = await check_library_status(db, body.mbids)
     return LibraryStatusResponse(
         statuses=statuses,
-        jellyfin_url=settings.jellyfin_url or None,
+        jellyfin_url=db_settings.get("jellyfin_external_url") or None,
     )
+
+
+class ScanResponse(BaseModel):
+    synced: int
+    resolved: int
+
+
+@router.post("/scan", response_model=ScanResponse)
+async def trigger_scan(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Manually trigger a Jellyfin library sync (admin only)."""
+    synced = await sync_jellyfin_library(db)
+    resolved = await auto_resolve_requests(db)
+    return ScanResponse(synced=synced, resolved=resolved)
 
 
 @router.get("/image/{jellyfin_item_id}")

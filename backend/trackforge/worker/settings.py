@@ -35,6 +35,6 @@ class WorkerSettings:
     functions = [process_acquisition_pipeline, sync_jellyfin_library]
     cron_jobs = [
         cron(process_acquisition_pipeline, minute=set(range(60)), second=0, run_at_startup=True),
-        # Sync Jellyfin library every 30 minutes
-        cron(sync_jellyfin_library, minute={0, 30}, second=10, run_at_startup=True),
+        # Sync Jellyfin library at configurable interval (checked inside the task)
+        cron(sync_jellyfin_library, minute=set(range(60)), second=10, run_at_startup=True),
     ]

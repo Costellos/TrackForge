@@ -26,6 +26,7 @@ DEFAULTS: dict[str, str] = {
     "require_approval": "true",
     "library_folder_pattern": "{artist}/{album} [{year}]",
     "file_naming_pattern": "{track}-{artist}-{title}",
+    "jellyfin_scan_interval": "30",
 }
 
 

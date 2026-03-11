@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from trackforge.config import get_settings
-from trackforge.db.models import AcquisitionJob, Collection, Request
+from trackforge.db.models import AcquisitionJob, Collection, ExternalIdentifier, Request
 from trackforge.domain.services.notification_service import notify_request_status
 from trackforge.domain.services.settings_service import get_setting
 
@@ -79,6 +79,31 @@ def _sanitize_path(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', "", name).strip().rstrip(".")
 
 
+async def _resolve_artist_name(db: AsyncSession, collection: Collection) -> str | None:
+    """Try to resolve artist name from MusicBrainz when collection has no primary_artist."""
+    from trackforge.adapters.metadata import musicbrainz as mb
+
+    result = await db.execute(
+        select(ExternalIdentifier).where(
+            ExternalIdentifier.entity_type == "collection",
+            ExternalIdentifier.entity_id == collection.id,
+            ExternalIdentifier.provider == "musicbrainz",
+        )
+    )
+    ext = result.scalar_one_or_none()
+    if not ext:
+        return None
+
+    try:
+        rg = await mb.get_release_group(ext.external_id)
+        if rg and rg.get("artists"):
+            return rg["artists"][0].get("name")
+    except Exception:
+        log.warning("processing.artist_resolve_failed", collection_id=collection.id)
+
+    return None
+
+
 async def _build_library_path(db: AsyncSession, req: Request) -> str | None:
     """
     Build the destination folder path using the library_folder_pattern setting.
@@ -99,6 +124,9 @@ async def _build_library_path(db: AsyncSession, req: Request) -> str | None:
     artist_name = "Unknown Artist"
     if collection.primary_artist:
         artist_name = collection.primary_artist.name
+    else:
+        # Fallback: look up artist from MusicBrainz via the collection's external ID
+        artist_name = await _resolve_artist_name(db, collection) or artist_name
 
     album_title = collection.title or "Unknown Album"
     year = ""

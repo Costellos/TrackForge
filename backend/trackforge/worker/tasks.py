@@ -50,15 +50,36 @@ async def process_acquisition_pipeline(ctx: dict) -> dict:
 async def sync_jellyfin_library(ctx: dict) -> dict:
     """
     Sync the Jellyfin music library into the library_items table.
-    Runs every 30 minutes via cron.
+    Checks the configured scan interval before running.
     """
-    from trackforge.domain.services.jellyfin_sync_service import sync_jellyfin_library as do_sync
+    from trackforge.domain.services.jellyfin_sync_service import (
+        auto_resolve_requests,
+        sync_jellyfin_library as do_sync,
+    )
+    from trackforge.domain.services.settings_service import get_setting
 
     async_session_factory = ctx["db_factory"]
+
+    # Check if enough time has elapsed since the last sync
+    last_sync = ctx.get("last_jellyfin_sync")
+    async with async_session_factory() as db:
+        interval_str = await get_setting(db, "jellyfin_scan_interval")
+
+    interval_minutes = max(5, int(interval_str or "30"))
+
+    import time
+    now = time.time()
+    if last_sync and (now - last_sync) < interval_minutes * 60:
+        return {"skipped": True}
 
     async with async_session_factory() as db:
         synced = await do_sync(db)
 
+    resolved = 0
     if synced:
-        log.info("jellyfin_sync.cron", synced=synced)
-    return {"synced": synced}
+        async with async_session_factory() as db:
+            resolved = await auto_resolve_requests(db)
+        log.info("jellyfin_sync.cron", synced=synced, resolved=resolved)
+
+    ctx["last_jellyfin_sync"] = now
+    return {"synced": synced, "resolved": resolved}

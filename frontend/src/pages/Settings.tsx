@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getSettings, updateSettings, AppSettings } from '../api/settings'
+import { getSettings, updateSettings, triggerScan, AppSettings } from '../api/settings'
 
 function Toggle({
   label,
@@ -40,6 +40,12 @@ export default function Settings() {
   const [folderPatternDirty, setFolderPatternDirty] = useState(false)
   const [filePattern, setFilePattern] = useState('')
   const [filePatternDirty, setFilePatternDirty] = useState(false)
+  const [jellyfinUrl, setJellyfinUrl] = useState('')
+  const [jellyfinUrlDirty, setJellyfinUrlDirty] = useState(false)
+  const [scanInterval, setScanInterval] = useState('')
+  const [scanIntervalDirty, setScanIntervalDirty] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanResult, setScanResult] = useState<string | null>(null)
 
   const { data, isFetching } = useQuery({
     queryKey: ['settings'],
@@ -53,6 +59,12 @@ export default function Settings() {
   }
   if (data && !filePatternDirty && filePattern !== data.file_naming_pattern) {
     setFilePattern(data.file_naming_pattern)
+  }
+  if (data && !jellyfinUrlDirty && jellyfinUrl !== data.jellyfin_external_url) {
+    setJellyfinUrl(data.jellyfin_external_url)
+  }
+  if (data && !scanIntervalDirty && scanInterval !== String(data.jellyfin_scan_interval)) {
+    setScanInterval(String(data.jellyfin_scan_interval))
   }
 
   async function handleToggle(key: keyof AppSettings, value: boolean) {
@@ -96,6 +108,52 @@ export default function Settings() {
       setError(msg ?? 'Failed to update setting')
     } finally {
       setSaving(null)
+    }
+  }
+
+  async function handleSaveJellyfinUrl() {
+    setSaving('jellyfin_external_url')
+    setError(null)
+    try {
+      await updateSettings({ jellyfin_external_url: jellyfinUrl })
+      setJellyfinUrlDirty(false)
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Failed to update setting')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  async function handleSaveScanInterval() {
+    setSaving('jellyfin_scan_interval')
+    setError(null)
+    try {
+      await updateSettings({ jellyfin_scan_interval: Math.max(5, parseInt(scanInterval) || 30) })
+      setScanIntervalDirty(false)
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Failed to update setting')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  async function handleScanNow() {
+    setScanning(true)
+    setError(null)
+    setScanResult(null)
+    try {
+      const result = await triggerScan()
+      setScanResult(`Scan complete: ${result.synced} items synced, ${result.resolved} requests resolved`)
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Failed to trigger scan')
+    } finally {
+      setScanning(false)
     }
   }
 
@@ -195,6 +253,85 @@ export default function Settings() {
               Preview: {filePattern.replace('{track}', '03').replace('{artist}', 'Pink Floyd').replace('{title}', 'Time')}.flac
             </div>
           </div>
+        </div>
+
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.sectionTitle}>Jellyfin</h2>
+
+        <div style={styles.settingRow}>
+          <div style={{ ...styles.settingText, flex: 1 }}>
+            <div style={styles.settingLabel}>External URL</div>
+            <div style={styles.settingDesc}>
+              The public URL used for "View on Jellyfin" links. This should be the URL you use to access Jellyfin in your browser (not the internal Docker URL).
+            </div>
+            <div style={styles.inputRow}>
+              <input
+                style={styles.textInput}
+                value={jellyfinUrl}
+                onChange={e => { setJellyfinUrl(e.target.value); setJellyfinUrlDirty(true) }}
+                placeholder="http://192.168.1.100:8096"
+                disabled={saving === 'jellyfin_external_url'}
+              />
+              {jellyfinUrlDirty && (
+                <button
+                  style={styles.saveBtn}
+                  onClick={handleSaveJellyfinUrl}
+                  disabled={saving === 'jellyfin_external_url'}
+                >
+                  {saving === 'jellyfin_external_url' ? 'Saving...' : 'Save'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.settingRow}>
+          <div style={{ ...styles.settingText, flex: 1 }}>
+            <div style={styles.settingLabel}>Library Scan Interval</div>
+            <div style={styles.settingDesc}>
+              How often to sync your Jellyfin library (in minutes). Minimum 5 minutes. After each scan, requests for albums now in the library are automatically marked as available.
+            </div>
+            <div style={styles.inputRow}>
+              <input
+                style={{ ...styles.textInput, maxWidth: 100 }}
+                type="number"
+                min={5}
+                value={scanInterval}
+                onChange={e => { setScanInterval(e.target.value); setScanIntervalDirty(true) }}
+                placeholder="30"
+                disabled={saving === 'jellyfin_scan_interval'}
+              />
+              <span style={{ color: '#666', fontSize: '0.85rem' }}>minutes</span>
+              {scanIntervalDirty && (
+                <button
+                  style={styles.saveBtn}
+                  onClick={handleSaveScanInterval}
+                  disabled={saving === 'jellyfin_scan_interval'}
+                >
+                  {saving === 'jellyfin_scan_interval' ? 'Saving...' : 'Save'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.settingRow}>
+          <div style={styles.settingText}>
+            <div style={styles.settingLabel}>Manual Scan</div>
+            <div style={styles.settingDesc}>
+              Trigger an immediate Jellyfin library sync. Any active requests for albums found in the library will be automatically resolved.
+            </div>
+            {scanResult && <div style={styles.scanResult}>{scanResult}</div>}
+          </div>
+          <button
+            style={scanning ? styles.scanBtnDisabled : styles.scanBtn}
+            onClick={handleScanNow}
+            disabled={scanning}
+          >
+            {scanning ? 'Scanning...' : 'Scan Now'}
+          </button>
         </div>
       </section>
     </div>
@@ -350,5 +487,34 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#555',
     marginTop: '0.35rem',
     fontFamily: 'monospace',
+  },
+  scanBtn: {
+    background: '#2563eb',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '0.5rem 1.25rem',
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
+  },
+  scanBtnDisabled: {
+    background: '#1e3a5f',
+    color: '#6b8db5',
+    border: 'none',
+    borderRadius: 6,
+    padding: '0.5rem 1.25rem',
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    cursor: 'not-allowed',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
+  },
+  scanResult: {
+    fontSize: '0.8rem',
+    color: '#4ade80',
+    marginTop: '0.5rem',
   },
 }

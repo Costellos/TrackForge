@@ -14,10 +14,12 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm import selectinload
+
 from trackforge.adapters.library.jellyfin import JellyfinClient
 from trackforge.cache import cache_delete, cache_get, cache_set
 from trackforge.config import get_settings
-from trackforge.db.models import LibraryItem
+from trackforge.db.models import Collection, ExternalIdentifier, LibraryItem, Request
 
 log = structlog.get_logger()
 
@@ -208,3 +210,74 @@ async def check_library_status(db: AsyncSession, mbids: list[str]) -> dict[str, 
 
     library_mbids = await get_library_mbids(db)
     return {mbid: library_mbids.get(mbid) for mbid in mbids}
+
+
+ACTIVE_STATUSES = {"approved", "searching", "downloading", "processing"}
+
+
+async def auto_resolve_requests(db: AsyncSession) -> int:
+    """
+    After a library sync, check active requests whose collections are now
+    in the Jellyfin library and mark them as available.
+    Returns the number of requests resolved.
+    """
+    from trackforge.domain.services.notification_service import notify_request_status
+
+    # Get all active collection requests
+    result = await db.execute(
+        select(Request).where(
+            Request.target_type == "collection",
+            Request.status.in_(ACTIVE_STATUSES),
+        )
+    )
+    active_requests = result.scalars().all()
+    if not active_requests:
+        return 0
+
+    # Get library MBIDs (freshly cached after sync)
+    library_mbids = await get_library_mbids(db)
+    if not library_mbids:
+        return 0
+
+    # Build a map of collection_id -> request for active requests
+    collection_ids = [r.target_id for r in active_requests]
+
+    # Look up MBIDs for these collections via external_identifiers
+    ext_result = await db.execute(
+        select(ExternalIdentifier).where(
+            ExternalIdentifier.entity_type == "collection",
+            ExternalIdentifier.entity_id.in_(collection_ids),
+            ExternalIdentifier.provider == "musicbrainz",
+        )
+    )
+    ext_ids = ext_result.scalars().all()
+
+    # Map collection_id -> mbid
+    collection_mbid_map = {ext.entity_id: ext.external_id for ext in ext_ids}
+
+    now = datetime.now(timezone.utc)
+    resolved = 0
+
+    for req in active_requests:
+        mbid = collection_mbid_map.get(req.target_id)
+        if not mbid:
+            continue
+        if mbid in library_mbids:
+            req.status = "available"
+            req.resolved_at = now
+            req.updated_at = now
+            resolved += 1
+            log.info(
+                "jellyfin_sync.auto_resolved",
+                request_id=req.id,
+                mbid=mbid,
+            )
+
+    if resolved:
+        await db.commit()
+        # Send notifications for resolved requests
+        for req in active_requests:
+            if req.status == "available":
+                await notify_request_status(db, req)
+
+    return resolved

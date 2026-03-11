@@ -19,6 +19,8 @@ class SettingsResponse(BaseModel):
     require_approval: bool
     library_folder_pattern: str
     file_naming_pattern: str
+    jellyfin_external_url: str
+    jellyfin_scan_interval: int
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -26,6 +28,8 @@ class SettingsUpdateRequest(BaseModel):
     require_approval: bool | None = None
     library_folder_pattern: str | None = None
     file_naming_pattern: str | None = None
+    jellyfin_external_url: str | None = None
+    jellyfin_scan_interval: int | None = None
 
 
 def _to_response(raw: dict[str, str]) -> SettingsResponse:
@@ -34,6 +38,8 @@ def _to_response(raw: dict[str, str]) -> SettingsResponse:
         require_approval=raw.get("require_approval", "true").lower() in ("true", "1", "yes"),
         library_folder_pattern=raw.get("library_folder_pattern", "{artist}/{album} [{year}]"),
         file_naming_pattern=raw.get("file_naming_pattern", "{track}-{artist}-{title}"),
+        jellyfin_external_url=raw.get("jellyfin_external_url", ""),
+        jellyfin_scan_interval=int(raw.get("jellyfin_scan_interval", "30")),
     )
 
 
@@ -62,6 +68,10 @@ async def patch_settings(
         updates["library_folder_pattern"] = body.library_folder_pattern
     if body.file_naming_pattern is not None:
         updates["file_naming_pattern"] = body.file_naming_pattern
+    if body.jellyfin_external_url is not None:
+        updates["jellyfin_external_url"] = body.jellyfin_external_url
+    if body.jellyfin_scan_interval is not None:
+        updates["jellyfin_scan_interval"] = str(max(5, body.jellyfin_scan_interval))
 
     if updates:
         raw = await update_settings(db, updates)

@@ -109,8 +109,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     padding: '0.5rem 1.5rem',
-    maxWidth: 1200,
-    margin: '0 auto',
     gap: '1.5rem',
   },
   left: {

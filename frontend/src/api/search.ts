@@ -22,6 +22,7 @@ export interface ReleaseGroupResult {
   first_release_date: string | null
   artists: { mbid: string; name: string }[]
   score: number | null
+  track_count: number | null
 }
 
 export interface RecordingResult {

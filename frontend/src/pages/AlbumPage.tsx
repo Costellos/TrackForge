@@ -69,6 +69,7 @@ function AlbumRequestButton({ mbid, album, inLibrary, jellyfinLink }: { mbid: st
         first_release_date: album.first_release_date,
         artists: album.artists,
         score: null,
+        track_count: null,
       })
       setState('done')
     } catch (err: unknown) {

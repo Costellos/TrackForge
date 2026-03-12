@@ -389,7 +389,7 @@ function LinkMusicBrainzModal({ item, onClose }: { item: DisplayEntry; onClose: 
               <div style={modalStyles.candidateInfo}>
                 <div style={modalStyles.candidateTitle}>{rg.title}</div>
                 <div style={modalStyles.candidateMeta}>
-                  {[rg.artists?.[0]?.name, rg.first_release_date?.slice(0, 4), rg.type].filter(Boolean).join(' · ')}
+                  {[rg.artists?.[0]?.name, rg.first_release_date?.slice(0, 4), rg.type, rg.track_count ? `${rg.track_count} tracks` : null].filter(Boolean).join(' · ')}
                 </div>
               </div>
               <button

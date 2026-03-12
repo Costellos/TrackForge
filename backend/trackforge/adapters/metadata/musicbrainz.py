@@ -347,6 +347,13 @@ def _normalize_release_group(data: dict, include_releases: bool = False) -> dict
                 "name": credit.get("name") or credit["artist"].get("name"),
             })
 
+    # Extract track count from the release with the most tracks (best approximation)
+    track_count = None
+    for r in data.get("releases", []):
+        release_tracks = sum(m.get("track-count", 0) for m in r.get("media", []))
+        if release_tracks and (track_count is None or release_tracks > track_count):
+            track_count = release_tracks
+
     result: dict[str, Any] = {
         "mbid": data.get("id"),
         "title": data.get("title"),
@@ -355,6 +362,7 @@ def _normalize_release_group(data: dict, include_releases: bool = False) -> dict
         "first_release_date": data.get("first-release-date"),
         "artists": artists,
         "score": data.get("score"),
+        "track_count": track_count,
     }
 
     if include_releases:

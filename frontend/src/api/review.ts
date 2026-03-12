@@ -7,12 +7,22 @@ export interface FileTags {
   duration_ms: number | null
 }
 
+export interface MatchCandidate {
+  filename: string
+  score: number
+  decision: string
+  components: Record<string, number>
+  matched: boolean
+  version_id: string | null
+}
+
 export interface ReviewTagsResponse {
   request_id: string
   name: string
   artist: string | null
   files: FileTags[]
   auto_import_at: string | null
+  match_candidates: MatchCandidate[] | null
 }
 
 export interface FileTagEdit {

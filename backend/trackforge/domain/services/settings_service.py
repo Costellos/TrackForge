@@ -30,6 +30,7 @@ DEFAULTS: dict[str, str] = {
     "tag_review_enabled": "true",
     "tag_review_auto_import": "true",
     "tag_review_timeout_minutes": "5",
+    "import_pipeline_v2": "false",
 }
 
 

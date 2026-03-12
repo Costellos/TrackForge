@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getArtist, getAlbumTracks, ReleaseGroupResult } from '../api/search'
-import { requestCollection, checkMbidStatuses } from '../api/requests'
+import { getArtist, getAlbumTracks, ReleaseGroupResult, TrackResult } from '../api/search'
+import { requestCollection, requestSong, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus, jellyfinWebUrl } from '../api/library'
 import PreviewButton from '../components/PreviewButton'
 
@@ -79,11 +79,64 @@ function RequestButton({ onRequest, initialState = 'idle' }: { onRequest: () => 
   )
 }
 
+function TrackRequestButton({ track, artists, initialState = 'idle' }: {
+  track: TrackResult
+  artists: { mbid: string; name: string }[]
+  initialState?: RequestState
+}) {
+  const [state, setState] = useState<RequestState>(initialState)
+
+  useEffect(() => {
+    if (initialState !== 'idle') setState(initialState)
+  }, [initialState])
+
+  if (!track.recording_mbid) {
+    return <button style={styles.trackRequestBtn} disabled>Request</button>
+  }
+
+  async function handle() {
+    setState('loading')
+    try {
+      const primary = artists[0]
+      await requestSong({
+        recording_mbid: track.recording_mbid!,
+        title: track.title,
+        artist_mbid: primary?.mbid ?? null,
+        artist_name: primary?.name ?? null,
+        length_ms: track.length_ms,
+      })
+      setState('done')
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      setState(status === 409 ? 'duplicate' : 'error')
+    }
+  }
+
+  if (state === 'done') return <span style={styles.trackRequestedTag}>Requested</span>
+  if (state === 'duplicate') return <span style={styles.trackDuplicateTag}>Requested</span>
+  if (state === 'error') return <span style={styles.trackErrorTag}>Error</span>
+
+  return (
+    <button style={styles.trackRequestBtnActive} onClick={handle} disabled={state === 'loading'}>
+      {state === 'loading' ? '...' : 'Request'}
+    </button>
+  )
+}
+
 function TrackList({ mbid }: { mbid: string }) {
   const { data, isFetching, error } = useQuery({
     queryKey: ['album-tracks', mbid],
     queryFn: () => getAlbumTracks(mbid),
     staleTime: 1000 * 60 * 5,
+  })
+
+  const trackMbids = data?.tracks.map(t => t.recording_mbid).filter((m): m is string => !!m) ?? []
+
+  const { data: trackStatusData } = useQuery({
+    queryKey: ['request-statuses', trackMbids],
+    queryFn: () => checkMbidStatuses(trackMbids),
+    enabled: trackMbids.length > 0,
+    staleTime: 1000 * 30,
   })
 
   if (isFetching) return <div style={styles.trackLoading}>Loading tracks...</div>
@@ -106,14 +159,18 @@ function TrackList({ mbid }: { mbid: string }) {
       {discNumbers.map(disc => (
         <div key={disc}>
           {multiDisc && <div style={styles.discLabel}>Disc {disc}</div>}
-          {discs[disc].map((track, i) => (
-            <div key={i} style={styles.trackRow}>
-              <span style={styles.trackNum}>{track.number ?? track.position}</span>
-              <PreviewButton recordingMbid={track.recording_mbid} title={track.title} artist={artistName} />
-              <span style={styles.trackTitle}>{track.title}</span>
-              <span style={styles.trackDuration}>{formatDuration(track.length_ms)}</span>
-            </div>
-          ))}
+          {discs[disc].map((track, i) => {
+            const trackState = track.recording_mbid ? statusToRequestState(trackStatusData?.[track.recording_mbid]) : 'idle'
+            return (
+              <div key={i} style={styles.trackRow}>
+                <span style={styles.trackNum}>{track.number ?? track.position}</span>
+                <PreviewButton recordingMbid={track.recording_mbid} title={track.title} artist={artistName} />
+                <span style={styles.trackTitle}>{track.title}</span>
+                <span style={styles.trackDuration}>{formatDuration(track.length_ms)}</span>
+                <TrackRequestButton track={track} artists={data.artists ?? []} initialState={trackState} />
+              </div>
+            )
+          })}
         </div>
       ))}
       {data.tracks.length === 0 && (
@@ -462,6 +519,52 @@ const styles: Record<string, React.CSSProperties> = {
   },
   jellyfinLink: {
     fontSize: '0.75rem', color: '#93c5fd', textDecoration: 'none', whiteSpace: 'nowrap',
+  },
+  trackRequestBtn: {
+    padding: '0.2rem 0.6rem',
+    borderRadius: 5,
+    border: '1px solid #2a2a2a',
+    background: 'transparent',
+    color: '#333',
+    fontSize: '0.75rem',
+    cursor: 'not-allowed',
+    flexShrink: 0,
+  },
+  trackRequestBtnActive: {
+    padding: '0.2rem 0.6rem',
+    borderRadius: 5,
+    border: '1px solid #2563eb',
+    background: 'transparent',
+    color: '#2563eb',
+    fontSize: '0.75rem',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  trackRequestedTag: {
+    padding: '0.2rem 0.6rem',
+    borderRadius: 5,
+    background: '#14532d',
+    color: '#86efac',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    flexShrink: 0,
+  },
+  trackDuplicateTag: {
+    padding: '0.2rem 0.6rem',
+    borderRadius: 5,
+    background: '#292524',
+    color: '#a8a29e',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    flexShrink: 0,
+  },
+  trackErrorTag: {
+    padding: '0.2rem 0.6rem',
+    borderRadius: 5,
+    background: '#450a0a',
+    color: '#fca5a5',
+    fontSize: '0.75rem',
+    flexShrink: 0,
   },
   empty: { color: '#555', textAlign: 'center', padding: '3rem 0' },
 }

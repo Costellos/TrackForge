@@ -699,3 +699,42 @@ async def link_jellyfin(
     await db.commit()
     await db.refresh(request)
     return request
+
+
+class SetArtistBody(BaseModel):
+    artist_mbid: str
+    artist_name: str
+
+
+@router.post("/{request_id}/set-artist", response_model=RequestResponse)
+async def set_artist(
+    request_id: str,
+    body: SetArtistBody,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Admin manually sets or fixes the artist on a collection request."""
+    from trackforge.domain.services.request_service import get_or_create_artist
+
+    request = await db.get(Request, request_id)
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if request.target_type != "collection":
+        raise HTTPException(status_code=400, detail="Only collection requests have artists")
+
+    collection = await db.get(Collection, request.target_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    artist = await get_or_create_artist(db, body.artist_mbid, body.artist_name)
+    collection.primary_artist_id = artist.id
+
+    params = request.search_params or {}
+    params["artist_name"] = body.artist_name
+    params["artist_mbid"] = body.artist_mbid
+    request.search_params = params
+    request.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(request)
+    return request

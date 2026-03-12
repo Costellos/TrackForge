@@ -397,9 +397,16 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     After a library sync, check collection requests and link them to Jellyfin items.
     - Active requests that match are marked as 'available'
     - All matched requests (including already-available) get jellyfin_item_id stored
+    - Available requests whose jellyfin_item_id is no longer in the library get unlinked
     Returns the number of newly resolved requests.
     """
     from trackforge.domain.services.notification_service import notify_request_status
+
+    # Build set of all current Jellyfin item IDs in library_items
+    lib_result = await db.execute(
+        select(LibraryItem.jellyfin_item_id).where(LibraryItem.jellyfin_item_id.isnot(None))
+    )
+    current_jf_ids = {row[0] for row in lib_result.all()}
 
     # Get all collection requests that could benefit from linking
     result = await db.execute(
@@ -416,9 +423,6 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     library_mbids = await get_library_mbids(db)
     name_index = await get_library_name_index(db)
     path_index = await _build_path_index(db)
-
-    if not library_mbids and not name_index and not path_index:
-        return 0
 
     # Collect collection IDs
     collection_ids = list({r.target_id for r in all_requests})
@@ -444,9 +448,28 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
     resolved = 0
     linked = 0
+    unlinked = 0
     dirty = False
 
     for req in all_requests:
+        params = req.search_params or {}
+        existing_jf_id = params.get("jellyfin_item_id")
+
+        # Check if this request's jellyfin_item_id was removed from Jellyfin
+        if existing_jf_id and existing_jf_id not in current_jf_ids:
+            params.pop("jellyfin_item_id", None)
+            req.search_params = params
+            if req.status == "available":
+                req.status = "cancelled"
+                req.updated_at = now
+                log.info("jellyfin_sync.unlinked_removed", request_id=req.id, old_jf_id=existing_jf_id)
+            unlinked += 1
+            dirty = True
+            continue
+
+        if not library_mbids and not name_index and not path_index:
+            continue
+
         jf_id = _match_request_to_jellyfin(
             req, collection_mbid_map, library_mbids, name_index, path_index, collections_by_id
         )
@@ -454,7 +477,6 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
             continue
 
         # Store jellyfin_item_id on the request for frontend access
-        params = req.search_params or {}
         if params.get("jellyfin_item_id") != jf_id:
             params["jellyfin_item_id"] = jf_id
             req.search_params = params
@@ -477,7 +499,7 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
             if req.status == "available" and req.resolved_at == now:
                 await notify_request_status(db, req)
 
-    if linked:
-        log.info("jellyfin_sync.linked_requests", linked=linked, resolved=resolved)
+    if linked or unlinked:
+        log.info("jellyfin_sync.linked_requests", linked=linked, resolved=resolved, unlinked=unlinked)
 
     return resolved

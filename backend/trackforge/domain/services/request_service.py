@@ -21,10 +21,13 @@ from trackforge.db.models import (
     AuditLog,
     Collection,
     ExternalIdentifier,
+    Release,
     Request,
     Song,
     Version,
+    VersionTrait,
 )
+from trackforge.domain.services.trait_parser import parse_traits
 
 
 # ─────────────────────────────────────────────
@@ -166,6 +169,17 @@ async def get_or_create_collection(
         confidence=1.0,
     ))
 
+    # Create a default release for this collection
+    release = Release(
+        id=str(uuid.uuid4()),
+        collection_id=collection.id,
+        release_date=parsed_date,
+        country=None,
+        label=None,
+    )
+    db.add(release)
+    await db.flush()
+
     return collection
 
 
@@ -197,22 +211,38 @@ async def get_or_create_song(
         if song:
             return song
 
-    # Create the song
+    # Parse version traits from title (e.g. "Song (Live)" -> trait: performance/live)
+    clean_title, traits = parse_traits(title)
+
+    # Create the song with cleaned title
     song = Song(
         id=str(uuid.uuid4()),
-        title=title,
+        title=clean_title,
     )
     db.add(song)
     await db.flush()
 
     # Create a version for this specific recording
+    # Use original title as override if traits were stripped
     version = Version(
         id=str(uuid.uuid4()),
         song_id=song.id,
+        title_override=title if traits else None,
         duration_ms=length_ms,
     )
     db.add(version)
     await db.flush()
+
+    # Store parsed traits on the version
+    for trait in traits:
+        db.add(VersionTrait(
+            id=str(uuid.uuid4()),
+            version_id=version.id,
+            category=trait.category,
+            name=trait.name,
+            source=trait.source,
+            confidence=1.0,
+        ))
 
     # Link artist
     if artist_mbid and artist_name:

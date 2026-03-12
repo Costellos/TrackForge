@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from trackforge.config import get_settings
-from trackforge.db.models import AcquisitionJob, Collection, ExternalIdentifier, Request
+from trackforge.db.models import AcquisitionJob, Collection, ExternalIdentifier, Request, Artist
 from trackforge.domain.services.notification_service import notify_request_status
 from trackforge.domain.services.settings_service import get_setting, get_setting_bool
 
@@ -39,6 +39,7 @@ async def process_processing_requests(db: AsyncSession) -> int:
         return 0
 
     tag_review_enabled = await get_setting_bool(db, "tag_review_enabled")
+    import_v2_enabled = await get_setting_bool(db, "import_pipeline_v2")
 
     processed = 0
     for req in requests:
@@ -61,6 +62,16 @@ async def process_processing_requests(db: AsyncSession) -> int:
         if moved_path:
             params = req.search_params or {}
             params["library_path"] = moved_path
+
+            # Run v2 import pipeline if enabled (creates MediaAsset + ImportCandidate + scoring)
+            if import_v2_enabled:
+                from trackforge.domain.services.import_service import process_import_pipeline
+                try:
+                    import_result = await process_import_pipeline(db, req, job, moved_path)
+                    params["import_v2"] = import_result
+                except Exception as e:
+                    log.error("processing.import_v2_failed", request_id=req.id, error=str(e))
+                    # Fall through to normal flow on error
 
             if tag_review_enabled:
                 req.status = "pending_review"
@@ -114,8 +125,10 @@ def _sanitize_path(name: str) -> str:
 
 
 async def _resolve_artist_name(db: AsyncSession, collection: Collection) -> str | None:
-    """Try to resolve artist name from MusicBrainz when collection has no primary_artist."""
+    """Try to resolve artist name from MusicBrainz when collection has no primary_artist.
+    Also persists the artist to collection.primary_artist_id if found."""
     from trackforge.adapters.metadata import musicbrainz as mb
+    from trackforge.domain.services.request_service import get_or_create_artist
 
     result = await db.execute(
         select(ExternalIdentifier).where(
@@ -133,8 +146,16 @@ async def _resolve_artist_name(db: AsyncSession, collection: Collection) -> str 
         log.info("processing.resolving_artist_from_mb", mbid=ext.external_id, collection_id=collection.id)
         rg = await mb.get_release_group(ext.external_id)
         if rg and rg.get("artists"):
-            name = rg["artists"][0].get("name")
-            log.info("processing.resolved_artist", name=name, mbid=ext.external_id)
+            artist_data = rg["artists"][0]
+            name = artist_data.get("name")
+            artist_mbid = artist_data.get("mbid")
+            if name and artist_mbid:
+                artist = await get_or_create_artist(db, artist_mbid, name)
+                collection.primary_artist_id = artist.id
+                await db.flush()
+                log.info("processing.artist_persisted", name=name, artist_id=artist.id, collection_id=collection.id)
+            elif name:
+                log.info("processing.resolved_artist", name=name, mbid=ext.external_id)
             return name
         log.warning("processing.no_artists_in_rg", mbid=ext.external_id, rg_keys=list(rg.keys()) if rg else None)
     except Exception as e:
@@ -172,9 +193,17 @@ async def _build_library_path(db: AsyncSession, req: Request) -> str | None:
         )
         # Fallback 1: check request.search_params for artist_name
         search_artist = (req.search_params or {}).get("artist_name")
+        search_artist_mbid = (req.search_params or {}).get("artist_mbid")
         if search_artist:
             artist_name = search_artist
-            log.info("processing.artist_from_search_params", artist=search_artist, collection_id=collection.id)
+            if search_artist_mbid:
+                from trackforge.domain.services.request_service import get_or_create_artist
+                artist = await get_or_create_artist(db, search_artist_mbid, search_artist)
+                collection.primary_artist_id = artist.id
+                await db.flush()
+                log.info("processing.artist_persisted_from_params", artist=search_artist, collection_id=collection.id)
+            else:
+                log.info("processing.artist_from_search_params", artist=search_artist, collection_id=collection.id)
         else:
             # Fallback 2: look up artist from MusicBrainz via the collection's external ID
             resolved = await _resolve_artist_name(db, collection)

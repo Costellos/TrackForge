@@ -213,7 +213,27 @@ class Collection(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     primary_artist: Mapped["Artist | None"] = relationship()
+    releases: Mapped[list["Release"]] = relationship(back_populates="collection", cascade="all, delete-orphan")
     version_entries: Mapped[list["VersionCollectionEntry"]] = relationship(back_populates="collection", cascade="all, delete-orphan")
+
+
+class Release(Base):
+    __tablename__ = "releases"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    collection_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str | None] = mapped_column(Text)  # NULL = same as collection title
+    release_date: Mapped[datetime | None] = mapped_column(Date)
+    country: Mapped[str | None] = mapped_column(String(2))
+    label: Mapped[str | None] = mapped_column(Text)
+    edition_name: Mapped[str | None] = mapped_column(Text)  # "Deluxe Edition", "Japan Import"
+    musicbrainz_release_id: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    collection: Mapped["Collection"] = relationship(back_populates="releases")
+    track_entries: Mapped[list["VersionCollectionEntry"]] = relationship(back_populates="release")
 
 
 class VersionCollectionEntry(Base):
@@ -223,12 +243,14 @@ class VersionCollectionEntry(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     version_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("versions.id"), nullable=False)
     collection_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False)
+    release_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("releases.id", ondelete="CASCADE"))
     disc_number: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
     track_number: Mapped[int | None] = mapped_column(SmallInteger)
     title_override: Mapped[str | None] = mapped_column(Text)
 
     version: Mapped["Version"] = relationship(back_populates="collection_entries")
     collection: Mapped["Collection"] = relationship(back_populates="version_entries")
+    release: Mapped["Release | None"] = relationship(back_populates="track_entries")
 
 
 # ─────────────────────────────────────────────
@@ -353,7 +375,7 @@ class AcquisitionJob(Base):
     __tablename__ = "acquisition_jobs"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("requests.id"), nullable=False)
+    request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("requests.id", ondelete="CASCADE"), nullable=False)
     adapter: Mapped[str] = mapped_column(AdapterTypeEnum, nullable=False)
     external_id: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(JobStatusEnum, nullable=False, default="queued")

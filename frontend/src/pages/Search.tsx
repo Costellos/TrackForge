@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { search, SearchType, ArtistResult, ReleaseGroupResult, RecordingResult, getArtistImages } from '../api/search'
-import { requestCollection, checkMbidStatuses } from '../api/requests'
+import { requestCollection, requestSong, checkMbidStatuses } from '../api/requests'
 import { checkLibraryStatus, jellyfinWebUrl } from '../api/library'
 
 function formatDuration(ms: number | null): string {
@@ -132,10 +132,12 @@ function AlbumCard({ album, initialState, inLibrary, jellyfinLink }: { album: Re
   )
 }
 
-function SongCard({ recording }: { recording: RecordingResult }) {
+function SongCard({ recording, initialState }: { recording: RecordingResult; initialState?: RequestState }) {
   const artistNames = recording.artists.map(a => a.name).join(', ')
   const firstRelease = recording.releases[0]
   const duration = formatDuration(recording.length_ms)
+  const primary = recording.artists[0]
+  const canRequest = !!recording.mbid
 
   return (
     <div style={styles.card}>
@@ -148,7 +150,22 @@ function SongCard({ recording }: { recording: RecordingResult }) {
           {duration && <span style={styles.typeBadge}>{duration}</span>}
         </div>
       </div>
-      <button style={{ ...styles.requestBtn, opacity: 0.4 }} disabled>Request</button>
+      {canRequest ? (
+        <RequestButton
+          onRequest={async () => {
+            await requestSong({
+              recording_mbid: recording.mbid!,
+              title: recording.title ?? '',
+              artist_mbid: primary?.mbid ?? null,
+              artist_name: primary?.name ?? null,
+              length_ms: recording.length_ms ?? null,
+            })
+          }}
+          initialState={initialState}
+        />
+      ) : (
+        <button style={{ ...styles.requestBtn, opacity: 0.4 }} disabled>Request</button>
+      )}
     </div>
   )
 }
@@ -246,7 +263,7 @@ export default function Search() {
               const jfLink = jfItemId && libraryResult?.jellyfin_url ? jellyfinWebUrl(libraryResult.jellyfin_url, jfItemId) : null
               return <AlbumCard key={i} album={result as ReleaseGroupResult} initialState={initialState} inLibrary={!!jfItemId} jellyfinLink={jfLink} />
             }
-            if (type === 'song') return <SongCard key={i} recording={result as RecordingResult} />
+            if (type === 'song') return <SongCard key={i} recording={result as RecordingResult} initialState={initialState} />
             return null
           })}
         </div>

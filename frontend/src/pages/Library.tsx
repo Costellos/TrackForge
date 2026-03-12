@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { listLibrary, LibraryEntry, listCandidates, selectCandidate, retryRequest, linkJellyfin, cancelRequest, NzbCandidate } from '../api/requests'
 import { api } from '../api/client'
 import { jellyfinWebUrl, searchLibrary, LibrarySearchItem, getJellyfinItems, linkMusicBrainz, unlinkMusicBrainz } from '../api/library'
-import { getReviewTags, saveReviewTags, approveReview, FileTags } from '../api/review'
+import { getReviewTags, saveReviewTags, approveReview, FileTags, MatchCandidate } from '../api/review'
 import { search, ReleaseGroupResult } from '../api/search'
 import { useAuthStore } from '../stores/auth'
 
@@ -416,6 +416,7 @@ function TagReviewModal({ requestId, entryName, onClose }: { requestId: string; 
   const [approving, setApproving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [autoImportAt, setAutoImportAt] = useState<string | null>(null)
+  const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[] | null>(null)
 
   // Load tags on mount
   useEffect(() => {
@@ -424,6 +425,7 @@ function TagReviewModal({ requestId, entryName, onClose }: { requestId: string; 
         const res = await getReviewTags(requestId)
         setFiles(res.files)
         setAutoImportAt(res.auto_import_at)
+        setMatchCandidates(res.match_candidates)
         const edits: Record<string, Record<string, string>> = {}
         for (const f of res.files) {
           edits[f.filename] = { ...f.tags }
@@ -547,6 +549,37 @@ function TagReviewModal({ requestId, entryName, onClose }: { requestId: string; 
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {matchCandidates && matchCandidates.length > 0 && (
+          <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #2a2a2a' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#c084fc', marginBottom: '0.5rem' }}>
+              Match Scores (Import Pipeline v2)
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              {matchCandidates.map(mc => (
+                <div key={mc.filename} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
+                  <span style={{ color: '#aaa', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {mc.filename}
+                  </span>
+                  <span style={{
+                    fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+                    color: mc.score >= 0.9 ? '#4ade80' : mc.score >= 0.7 ? '#facc15' : '#f87171',
+                  }}>
+                    {(mc.score * 100).toFixed(0)}%
+                  </span>
+                  <span style={{
+                    fontSize: '0.65rem', textTransform: 'uppercase', padding: '0.1rem 0.4rem',
+                    borderRadius: 4, fontWeight: 600,
+                    background: mc.matched ? '#052e16' : mc.decision === 'review' ? '#422006' : '#450a0a',
+                    color: mc.matched ? '#4ade80' : mc.decision === 'review' ? '#fdba74' : '#fca5a5',
+                  }}>
+                    {mc.matched ? 'Matched' : mc.decision}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

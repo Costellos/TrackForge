@@ -8,8 +8,12 @@ A self-hosted music request and acquisition platform. Think Jellyseerr, but for 
 - **Request System** — Users request songs or albums; admins approve and track fulfillment
 - **Acquisition Pipeline** — Automated download via Usenet (Prowlarr + NZBGet/SABnzbd), Soulseek (slskd), or torrents (qBittorrent)
 - **Library Management** — Configurable folder/file naming patterns, auto-import into your music library
+- **Tag Review** — Admin review of audio file tags before import, with auto-import timeout
+- **Match Scoring** — Confidence-based matching of downloaded files against expected metadata (artist, title, duration, MBID, year, version traits)
+- **Version Trait Detection** — Automatic parsing of version info from titles (Live, Remastered, Acoustic, Remix, Demo, etc.)
+- **Import Pipeline v2** — Optional feature-flagged pipeline that creates structured import candidates with match scores for smarter review
 - **Song Previews** — 30-second previews via Spotify or iTunes, with YouTube fallback
-- **Jellyfin Integration** — Optional library scan triggers after import
+- **Jellyfin Integration** — Automatic library scans after import, auto-unlink when items are removed from Jellyfin
 - **Discord Notifications** — Webhook alerts for request status changes
 - **Multi-user** — Registration, admin approval, role-based access
 
@@ -133,6 +137,34 @@ docker compose up -d --build
 ```
 
 ---
+
+## Data Model
+
+TrackForge uses a rich internal model designed around the MusicBrainz hierarchy:
+
+- **Artist** — Musicians/bands, linked via MusicBrainz artist IDs
+- **Song** — The abstract composition (not a specific recording)
+- **Version** — A specific recording of a song (e.g., studio, live, remastered)
+- **Version Traits** — Composable tags on a version (live, remastered, acoustic, remix, etc.)
+- **Collection** — An album, EP, single, compilation, or other grouping
+- **Release** — A specific edition of a collection (original, deluxe, Japan import, etc.)
+- **External Identifier** — Links local entities to MusicBrainz, Discogs, Spotify, etc.
+- **Media Asset** — A physical audio file with technical metadata and match state
+- **Import Candidate** — Tracks the staged import of a media asset with match scoring
+
+## App Settings
+
+Configurable via the admin settings page:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `library_folder_pattern` | `{artist}/{album} [{year}]` | Folder structure for imported music |
+| `file_naming_pattern` | `{track}-{artist}-{title}` | Audio file naming pattern |
+| `tag_review_enabled` | `true` | Require admin tag review before import |
+| `tag_review_auto_import` | `true` | Auto-import after review timeout |
+| `tag_review_timeout_minutes` | `5` | Minutes before auto-import |
+| `import_pipeline_v2` | `false` | Enable structured import with match scoring |
+| `jellyfin_scan_interval` | `30` | Minutes between Jellyfin library syncs |
 
 ## Tech Stack
 

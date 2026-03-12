@@ -452,7 +452,7 @@ async def auto_resolve_requests(db: AsyncSession) -> int:
     dirty = False
 
     for req in all_requests:
-        params = req.search_params or {}
+        params = dict(req.search_params or {})
         existing_jf_id = params.get("jellyfin_item_id")
 
         # Check if this request's jellyfin_item_id was removed from Jellyfin

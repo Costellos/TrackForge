@@ -151,7 +151,7 @@ async def auto_import_pending_reviews(db: AsyncSession) -> int:
     imported = 0
 
     for req in pending:
-        params = req.search_params or {}
+        params = dict(req.search_params or {})
         review_at_str = params.get("pending_review_at")
         if not review_at_str:
             # No timestamp — set it now and skip this cycle

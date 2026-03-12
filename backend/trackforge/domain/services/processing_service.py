@@ -60,7 +60,7 @@ async def process_processing_requests(db: AsyncSession) -> int:
             continue
 
         if moved_path:
-            params = req.search_params or {}
+            params = dict(req.search_params or {})
             params["library_path"] = moved_path
 
             # Run v2 import pipeline if enabled (creates MediaAsset + ImportCandidate + scoring)

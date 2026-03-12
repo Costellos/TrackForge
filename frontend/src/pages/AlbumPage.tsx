@@ -135,10 +135,11 @@ function TrackRequestButton({ track, artists, initialState = 'idle' }: {
 export default function AlbumPage() {
   const { mbid } = useParams<{ mbid: string }>()
   const navigate = useNavigate()
+  const [selectedRelease, setSelectedRelease] = useState<string | undefined>(undefined)
 
   const { data, isFetching, error } = useQuery({
-    queryKey: ['album-tracks', mbid],
-    queryFn: () => getAlbumTracks(mbid!),
+    queryKey: ['album-tracks', mbid, selectedRelease],
+    queryFn: () => getAlbumTracks(mbid!, selectedRelease),
     enabled: !!mbid,
     staleTime: 1000 * 60 * 5,
   })
@@ -219,6 +220,21 @@ export default function AlbumPage() {
             </div>
             <AlbumRequestButton mbid={mbid!} album={data} inLibrary={inLibrary} jellyfinLink={jellyfinLink} />
           </div>
+
+          {data.releases && data.releases.length > 1 && (
+            <div style={styles.releasePicker}>
+              <label style={styles.releaseLabel}>Release:</label>
+              <select
+                style={styles.releaseSelect}
+                value={data.release_mbid ?? ''}
+                onChange={e => setSelectedRelease(e.target.value || undefined)}
+              >
+                {data.releases.map(r => (
+                  <option key={r.mbid} value={r.mbid}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div style={styles.trackList}>
             {discNumbers.map(disc => (
@@ -435,6 +451,29 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#93c5fd',
     textDecoration: 'none',
     whiteSpace: 'nowrap',
+  },
+  releasePicker: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    marginBottom: '1rem',
+    padding: '0.5rem 0',
+  },
+  releaseLabel: {
+    fontSize: '0.8rem',
+    color: '#888',
+    flexShrink: 0,
+  },
+  releaseSelect: {
+    flex: 1,
+    maxWidth: 500,
+    padding: '0.35rem 0.5rem',
+    borderRadius: 5,
+    border: '1px solid #333',
+    background: '#1a1a1a',
+    color: '#e0e0e0',
+    fontSize: '0.8rem',
+    cursor: 'pointer',
   },
   empty: { color: '#555', padding: '2rem 0', textAlign: 'center' },
 }

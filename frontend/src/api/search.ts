@@ -84,6 +84,11 @@ export interface TrackResult {
   recording_mbid: string | null
 }
 
+export interface ReleaseOption {
+  mbid: string
+  label: string
+}
+
 export interface AlbumTracksResult {
   release_group_mbid: string
   release_mbid?: string
@@ -93,10 +98,12 @@ export interface AlbumTracksResult {
   first_release_date: string | null
   artists: { mbid: string; name: string }[]
   tracks: TrackResult[]
+  releases?: ReleaseOption[]
 }
 
-export async function getAlbumTracks(mbid: string): Promise<AlbumTracksResult> {
-  const res = await api.get<AlbumTracksResult>(`/search/album/${mbid}/tracks`)
+export async function getAlbumTracks(mbid: string, releaseMbid?: string): Promise<AlbumTracksResult> {
+  const params = releaseMbid ? { release_mbid: releaseMbid } : {}
+  const res = await api.get<AlbumTracksResult>(`/search/album/${mbid}/tracks`, { params })
   return res.data
 }
 

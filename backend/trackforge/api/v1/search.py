@@ -125,12 +125,41 @@ async def get_release_group(mbid: str):
     return result
 
 
+VINYL_FORMATS = {"12\" Vinyl", "7\" Vinyl", "10\" Vinyl", "Vinyl", "Cassette"}
+
+
+def _release_sort_key(r: dict) -> tuple:
+    formats = set(r.get("formats", []))
+    is_vinyl = bool(formats & VINYL_FORMATS) if formats else False
+    track_count = r.get("track_count", 0)
+    date = r.get("date", "9999")
+    # Sort: non-vinyl first, then most tracks, then oldest date
+    return (is_vinyl, -track_count, date)
+
+
+def _release_label(r: dict) -> str:
+    """Build a human-readable label for a release."""
+    parts = []
+    formats = r.get("formats", [])
+    if formats:
+        parts.append(" + ".join(dict.fromkeys(formats)))  # deduplicate preserving order
+    if r.get("country"):
+        parts.append(r["country"])
+    if r.get("date"):
+        parts.append(r["date"])
+    tc = r.get("track_count", 0)
+    if tc:
+        parts.append(f"{tc} tracks")
+    return " · ".join(parts) if parts else (r.get("title") or r.get("mbid", "Unknown"))
+
+
 @router.get("/album/{mbid}/tracks")
-async def get_album_tracks(mbid: str):
+async def get_album_tracks(mbid: str, release_mbid: str | None = None):
     """
     Get the tracklist for a release group.
-    Picks the oldest dated release (original pressing) and returns its tracks.
-    Also accepts a release MBID — will resolve to its parent release-group automatically.
+    Picks the best release (CD/Digital, most tracks) by default.
+    Pass ?release_mbid=... to select a specific release.
+    Also accepts a release MBID as the path param — will resolve to its parent release-group.
     """
     rg = await mb.get_release_group(mbid)
 
@@ -146,6 +175,14 @@ async def get_album_tracks(mbid: str):
         raise HTTPException(status_code=404, detail="Album not found")
 
     releases = rg.get("releases", [])
+
+    # Build release options for the frontend
+    sorted_releases = sorted(releases, key=_release_sort_key) if releases else []
+    release_options = [
+        {"mbid": r["mbid"], "label": _release_label(r)}
+        for r in sorted_releases
+    ]
+
     if not releases:
         return {
             "release_group_mbid": rg_mbid,
@@ -155,23 +192,28 @@ async def get_album_tracks(mbid: str):
             "first_release_date": rg.get("first_release_date"),
             "artists": rg.get("artists", []),
             "tracks": [],
+            "releases": release_options,
         }
 
-    # Pick the oldest dated release (original pressing)
-    dated = [r for r in releases if r.get("date")]
-    best = sorted(dated, key=lambda r: r["date"])[0] if dated else releases[0]
+    # Use specific release if requested, otherwise pick best
+    chosen = None
+    if release_mbid:
+        chosen = next((r for r in releases if r["mbid"] == release_mbid), None)
+    if not chosen:
+        chosen = sorted_releases[0]
 
-    release = await mb.get_release(best["mbid"])
+    release = await mb.get_release(chosen["mbid"])
     if release is None:
         raise HTTPException(status_code=404, detail="Release not found")
 
     release["release_group_mbid"] = rg_mbid
-    release["release_mbid"] = best["mbid"]
+    release["release_mbid"] = chosen["mbid"]
     release["album_title"] = rg.get("title")
     release["album_type"] = rg.get("type")
     release["album_secondary_types"] = rg.get("secondary_types", [])
     release["first_release_date"] = rg.get("first_release_date")
     release["artists"] = rg.get("artists", [])
+    release["releases"] = release_options
     return release
 
 

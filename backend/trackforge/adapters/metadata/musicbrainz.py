@@ -159,7 +159,7 @@ async def get_release_group(mbid: str) -> dict | None:
     log.info("mb.get_rg", mbid=mbid)
     try:
         data = await _get(f"/release-group/{mbid}", {
-            "inc": "artists+releases",
+            "inc": "artists+releases+media",
             "fmt": "json",
         })
     except httpx.HTTPStatusError as e:
@@ -358,16 +358,20 @@ def _normalize_release_group(data: dict, include_releases: bool = False) -> dict
     }
 
     if include_releases:
-        result["releases"] = [
-            {
+        result["releases"] = []
+        for r in data.get("releases", []):
+            media = r.get("media", [])
+            formats = [m.get("format", "") for m in media if m.get("format")]
+            track_count = sum(m.get("track-count", 0) for m in media)
+            result["releases"].append({
                 "mbid": r.get("id"),
                 "title": r.get("title"),
                 "date": r.get("date"),
                 "country": r.get("country"),
                 "status": r.get("status"),
-            }
-            for r in data.get("releases", [])
-        ]
+                "formats": formats,
+                "track_count": track_count,
+            })
 
     return result
 
